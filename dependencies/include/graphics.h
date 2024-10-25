@@ -535,7 +535,12 @@ namespace graphics
 	/** \defgroup _GRAPHICS Graphics output
 	* @{
 	*/
-	 
+
+	/** ????
+   * @{
+   */
+	bool setWindowName(const char* title);
+
 	/** Draws a Triangle.
 
 		Based on 3 independed vertices.
