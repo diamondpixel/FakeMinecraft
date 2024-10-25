@@ -14,7 +14,7 @@ The tools bellow were used to create my game:
 - [C++] -  Visual Studio Tools? 🤔
 - [Math] - Read a book or something? 🤔
 
-## Installation
+## Installation (Windows x64 Exclusively)
 
 - The game requires [Cmake](https://cmake.org/download/) in order to compile.
 - You need the custom image of [SGG](https://github.com/diamondpixel/sgg) library.
