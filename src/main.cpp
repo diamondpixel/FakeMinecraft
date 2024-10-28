@@ -1,4 +1,3 @@
-#include <chrono>
 #include <thread>
 
 #include "graphics.h"
@@ -11,14 +10,13 @@ int main() {
 
     engine = new GraphicsEngine3D(); // Initialize the engine
     engine->createWindow(1200,600,"Hello world");
-    graphics::setDrawFunction([]() { engine->draw(); });
-    graphics::setUpdateFunction([](float deltaTime) { engine->update(deltaTime); });
+    setDrawFunction([]() { engine->draw(); });
+    setUpdateFunction([](float deltaTime) { engine->update(deltaTime); });
 
-    graphics::setCanvasSize(1200, 600);
+    setCanvasSize(1200, 600);
     setCanvasScaleMode(graphics::CANVAS_SCALE_FIT);
 
-    graphics::startMessageLoop();
-
+    startMessageLoop();
 
     delete engine;
     return 0;

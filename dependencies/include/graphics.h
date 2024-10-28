@@ -259,6 +259,9 @@ namespace graphics
 
 		\see windowToCanvasY
 	*/
+
+	float getFPS();
+
 	float windowToCanvasX(float x, bool clamped = true);
 
 	/** Converts the vertical window coordinate of a point to the corresponding canvas coordinate.
@@ -536,9 +539,6 @@ namespace graphics
 	* @{
 	*/
 
-	/** ????
-   * @{
-   */
 	bool setWindowName(const char* title);
 
 	/** Draws a Triangle.

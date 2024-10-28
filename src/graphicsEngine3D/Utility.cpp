@@ -1,64 +1,67 @@
 #include "Utility.h"
+#include <graphics.h>
+
+using namespace graphics;
 
 namespace graphicsEngine3D {
-     Vec3D Vec3D::add(Vec3D &v1, Vec3D &v2) {
-       return {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z};
-     }
+    Vec3D Vec3D::add(Vec3D &v1, Vec3D &v2) {
+        return {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z};
+    }
 
-     Vec3D Vec3D::sub(Vec3D &v1, Vec3D &v2) {
-       return {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z};
-     }
+    Vec3D Vec3D::sub(Vec3D &v1, Vec3D &v2) {
+        return {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z};
+    }
 
-     Vec3D Vec3D::mul(Vec3D &v1, float k) {
-      return {v1.x * k, v1.y * k, v1.z * k};
-     }
+    Vec3D Vec3D::mul(Vec3D &v1, float k) {
+        return {v1.x * k, v1.y * k, v1.z * k};
+    }
 
-     Vec3D Vec3D::div(Vec3D &v1, float k) {
-       return {v1.x / k, v1.y / k, v1.z / k};
-     }
+    Vec3D Vec3D::div(Vec3D &v1, float k) {
+        return {v1.x / k, v1.y / k, v1.z / k};
+    }
 
-     float Vec3D::dotProduct(Vec3D &v1, Vec3D &v2) {
-       return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
-     }
+    float Vec3D::dotProduct(Vec3D &v1, Vec3D &v2) {
+        return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+    }
 
-     float Vec3D::length(Vec3D &v) {
-       return sqrtf(dotProduct(v, v));
-     }
+    float Vec3D::length(Vec3D &v) {
+        return sqrtf(dotProduct(v, v));
+    }
 
-     Vec3D Vec3D::normalise(Vec3D &v) {
-      float l = length(v);
-      return {v.x / l, v.y / l, v.z / l};
-     }
+    Vec3D Vec3D::normalise(Vec3D &v) {
+        float l = length(v);
+        return {v.x / l, v.y / l, v.z / l};
+    }
 
-     Vec3D Vec3D::crossProduct(Vec3D &v1, Vec3D &v2) {
-      Vec3D v;
-      v.x = v1.y * v2.z - v1.z * v2.y;
-      v.y = v1.z * v2.x - v1.x * v2.z;
-      v.z = v1.x * v2.y - v1.y * v2.x;
-      return v;
-     }
+    Vec3D Vec3D::crossProduct(Vec3D &v1, Vec3D &v2) {
+        Vec3D v;
+        v.x = v1.y * v2.z - v1.z * v2.y;
+        v.y = v1.z * v2.x - v1.x * v2.z;
+        v.z = v1.x * v2.y - v1.y * v2.x;
+        return v;
+    }
 
-     Vec3D Vec3D::intersectPlane(Vec3D &plane_p, Vec3D &plane_n, Vec3D &lineStart, Vec3D &lineEnd) {
-      plane_n = normalise(plane_n);
-      float plane_d = -dotProduct(plane_n, plane_p);
-      float ad = dotProduct(lineStart, plane_n);
-      float bd = dotProduct(lineEnd, plane_n);
-      float t = (-plane_d - ad) / (bd - ad);
-      Vec3D lineStartToEnd = sub(lineEnd, lineStart);
-      Vec3D lineToIntersect = mul(lineStartToEnd, t);
-      return add(lineStart, lineToIntersect);
-     }
+    Vec3D Vec3D::intersectPlane(Vec3D &plane_p, Vec3D &plane_n, Vec3D &lineStart, Vec3D &lineEnd) {
+        plane_n = normalise(plane_n);
+        float plane_d = -dotProduct(plane_n, plane_p);
+        float ad = dotProduct(lineStart, plane_n);
+        float bd = dotProduct(lineEnd, plane_n);
+        float t = (-plane_d - ad) / (bd - ad);
+        Vec3D lineStartToEnd = sub(lineEnd, lineStart);
+        Vec3D lineToIntersect = mul(lineStartToEnd, t);
+        return add(lineStart, lineToIntersect);
+    }
 
-     Vec3D Crossover::multiplyVector(Matrix4x4 &m, Vec3D &i) {
-      Vec3D v;
-      v.x = i.x * m.m[0][0] + i.y * m.m[1][0] + i.z * m.m[2][0] + i.w * m.m[3][0];
-      v.y = i.x * m.m[0][1] + i.y * m.m[1][1] + i.z * m.m[2][1] + i.w * m.m[3][1];
-      v.z = i.x * m.m[0][2] + i.y * m.m[1][2] + i.z * m.m[2][2] + i.w * m.m[3][2];
-      v.w = i.x * m.m[0][3] + i.y * m.m[1][3] + i.z * m.m[2][3] + i.w * m.m[3][3];
-      return v;
-     }
+    Vec3D Crossover::multiplyVector(Matrix4x4 &m, Vec3D &i) {
+        Vec3D v;
+        v.x = i.x * m.m[0][0] + i.y * m.m[1][0] + i.z * m.m[2][0] + i.w * m.m[3][0];
+        v.y = i.x * m.m[0][1] + i.y * m.m[1][1] + i.z * m.m[2][1] + i.w * m.m[3][1];
+        v.z = i.x * m.m[0][2] + i.y * m.m[1][2] + i.z * m.m[2][2] + i.w * m.m[3][2];
+        v.w = i.x * m.m[0][3] + i.y * m.m[1][3] + i.z * m.m[2][3] + i.w * m.m[3][3];
+        return v;
+    }
 
-     Matrix4x4 Matrix4x4::makeIdentity() {
+    Matrix4x4 Matrix4x4::makeIdentity() {
         Matrix4x4 matrix;
         matrix.m[0][0] = 1.0f;
         matrix.m[1][1] = 1.0f;
@@ -67,7 +70,7 @@ namespace graphicsEngine3D {
         return matrix;
     }
 
-     Matrix4x4 Matrix4x4::makeRotationX(float fAngleRad) {
+    Matrix4x4 Matrix4x4::makeRotationX(float fAngleRad) {
         Matrix4x4 matrix;
         matrix.m[0][0] = 1.0f;
         matrix.m[1][1] = cosf(fAngleRad);
@@ -78,7 +81,7 @@ namespace graphicsEngine3D {
         return matrix;
     }
 
-     Matrix4x4 Matrix4x4::makeRotationY(float fAngleRad) {
+    Matrix4x4 Matrix4x4::makeRotationY(float fAngleRad) {
         Matrix4x4 matrix;
         matrix.m[0][0] = cosf(fAngleRad);
         matrix.m[0][2] = sinf(fAngleRad);
@@ -89,7 +92,7 @@ namespace graphicsEngine3D {
         return matrix;
     }
 
-     Matrix4x4 Matrix4x4::makeRotationZ(float fAngleRad) {
+    Matrix4x4 Matrix4x4::makeRotationZ(float fAngleRad) {
         Matrix4x4 matrix;
         matrix.m[0][0] = cosf(fAngleRad);
         matrix.m[0][1] = sinf(fAngleRad);
@@ -100,7 +103,7 @@ namespace graphicsEngine3D {
         return matrix;
     }
 
-     Matrix4x4 Matrix4x4::makeTranslation(float x, float y, float z) {
+    Matrix4x4 Matrix4x4::makeTranslation(float x, float y, float z) {
         Matrix4x4 matrix;
         matrix.m[0][0] = 1.0f;
         matrix.m[1][1] = 1.0f;
@@ -112,7 +115,7 @@ namespace graphicsEngine3D {
         return matrix;
     }
 
-     Matrix4x4 Matrix4x4::makeProjection(float fFovDegrees, float fAspectRatio, float fNear, float fFar) {
+    Matrix4x4 Matrix4x4::makeProjection(float fFovDegrees, float fAspectRatio, float fNear, float fFar) {
         float fFovRad = 1.0f / tanf(fFovDegrees * 0.5f / 180.0f * 3.14159f);
         Matrix4x4 matrix;
         matrix.m[0][0] = fAspectRatio * fFovRad;
@@ -124,7 +127,7 @@ namespace graphicsEngine3D {
         return matrix;
     }
 
-     Matrix4x4 Matrix4x4::multiplyMatrix(Matrix4x4 &m1, Matrix4x4 &m2) {
+    Matrix4x4 Matrix4x4::multiplyMatrix(Matrix4x4 &m1, Matrix4x4 &m2) {
         Matrix4x4 matrix;
         for (int c = 0; c < 4; c++)
             for (int r = 0; r < 4; r++)
@@ -133,7 +136,7 @@ namespace graphicsEngine3D {
         return matrix;
     }
 
-     Matrix4x4 Crossover::pointAt(Vec3D &pos, Vec3D &target, Vec3D &up) {
+    Matrix4x4 Crossover::pointAt(Vec3D &pos, Vec3D &target, Vec3D &up) {
         // Calculate new forward direction
         Vec3D newForward = Vec3D::sub(target, pos);
         newForward = Vec3D::normalise(newForward);
@@ -167,7 +170,7 @@ namespace graphicsEngine3D {
         return matrix;
     }
 
-     Matrix4x4 Matrix4x4::quickInverse(Matrix4x4 &m) // Only for Rotation/Translation Matrices
+    Matrix4x4 Matrix4x4::quickInverse(Matrix4x4 &m) // Only for Rotation/Translation Matrices
     {
         Matrix4x4 matrix;
         matrix.m[0][0] = m.m[0][0];
@@ -190,7 +193,7 @@ namespace graphicsEngine3D {
     }
 
     int Triangle::clipAgainstPlane(Vec3D plane_p, Vec3D plane_n, Triangle &in_tri, Triangle &out_tri1,
-                                  Triangle &out_tri2) {
+                                   Triangle &out_tri2) {
         // Make sure plane normal is indeed normal
         plane_n = Vec3D::normalise(plane_n);
 
@@ -246,8 +249,7 @@ namespace graphicsEngine3D {
             // the plane, the Triangle simply becomes a smaller Triangle
 
             // Copy appearance info to new Triangle
-            out_tri1.col = in_tri.col;
-            out_tri1.sym = in_tri.sym;
+            out_tri1.color = in_tri.color;
 
             // The inside point is valid, so keep that...
             out_tri1.p[0] = *inside_points[0];
@@ -266,11 +268,8 @@ namespace graphicsEngine3D {
             // represent a quad with two new Triangles
 
             // Copy appearance info to new Triangles
-            out_tri1.col = in_tri.col;
-            out_tri1.sym = in_tri.sym;
-
-            out_tri2.col = in_tri.col;
-            out_tri2.sym = in_tri.sym;
+            out_tri1.color = in_tri.color;
+            out_tri2.color = in_tri.color;
 
             // The first Triangle consists of the two inside points and a new
             // point determined by the location where one side of the Triangle
@@ -288,5 +287,61 @@ namespace graphicsEngine3D {
 
             return 2; // Return two newly formed Triangles which form a quad
         }
+    }
+
+    Brush Crossover::getColour(float lum) {
+        Brush c;
+        int pixel_bw = (int) (13.0f * lum);
+        switch (pixel_bw) {
+            case 0:
+                c.fill_color[0] = 0;
+                c.fill_color[1] = 0;
+                c.fill_color[2] = 0;
+                c.outline_color[0] = 0;
+                c.outline_color[1] = 0;
+                c.outline_color[2] = 0;
+                break;
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+                c.fill_color[0] = 0.2f;
+                c.fill_color[1] = 0.2f;
+                c.fill_color[2] = 0.2f;
+                c.outline_color[0] = 0.2f;
+                c.outline_color[1] = 0.2f;
+                c.outline_color[2] = 0.2f;
+                break;
+            case 5:
+            case 6:
+            case 7:
+            case 8:
+                c.fill_color[0] = 0.5f;
+                c.fill_color[1] = 0.5f;
+                c.fill_color[2] = 0.5f;
+                c.outline_color[0] = 0.5f;
+                c.outline_color[1] = 0.5f;
+                c.outline_color[2] = 0.5f;
+                break;
+            case 9:
+            case 10:
+            case 11:
+            case 12:
+                c.fill_color[0] = 1.0f;
+                c.fill_color[1] = 1.0f;
+                c.fill_color[2] = 1.0f;
+                c.outline_color[0] = 1.0f;
+                c.outline_color[1] = 1.0f;
+                c.outline_color[2] = 1.0f;
+                break;
+            default:
+                c.fill_color[0] = 0;
+                c.fill_color[1] = 0;
+                c.fill_color[2] = 0;
+                c.outline_color[0] = 0.0f;
+                c.outline_color[1] = 0.0f;
+                c.outline_color[2] = 0.0f;
+        }
+        return c;
     }
 }

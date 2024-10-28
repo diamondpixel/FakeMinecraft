@@ -2,9 +2,11 @@
 #include <string>
 #include <strstream>
 #include <fstream>
-#include <list>
+#include <graphics.h>
 
 using namespace std;
+using namespace graphics;
+
 namespace graphicsEngine3D {
 struct Vec3D {
     float x = 0;
@@ -25,8 +27,7 @@ struct Vec3D {
 
 struct Triangle {
     Vec3D p[3];
-    wchar_t sym;
-    short col;
+    Brush color;
     static int clipAgainstPlane(Vec3D plane_p, Vec3D plane_n, Triangle &in_tri, Triangle &out_tri1,Triangle &out_tri2);
 };
 
@@ -40,12 +41,12 @@ struct Matrix4x4 {
     static Matrix4x4 makeTranslation(float x, float y, float z);
     static Matrix4x4 makeProjection(float fFovDegrees, float fAspectRatio, float fNear, float fFar);
     static Matrix4x4 multiplyMatrix(Matrix4x4 &m1, Matrix4x4 &m2);
-    static Matrix4x4 pointAt(Vec3D &pos, Vec3D &target, Vec3D &up);
     static Matrix4x4 quickInverse(Matrix4x4 &m);
 
 };
 
 struct Crossover {
+    static Brush getColour(float lum);
     static Vec3D multiplyVector(Matrix4x4 &m, Vec3D &i);
     static Matrix4x4 pointAt(Vec3D &pos, Vec3D &target, Vec3D &up);
 };
