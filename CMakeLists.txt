@@ -6,8 +6,8 @@ set(CMAKE_CXX_STANDARD 14)
 file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS
         src/*.hpp
         src/*.cpp
-        src/graphicsEngine3D/*.h
-        src/graphicsEngine3D/*.cpp
+        src/Engine/*.h
+        src/Engine/*.cpp
 )
 
 include_directories(
@@ -33,3 +33,4 @@ add_custom_command(TARGET CPP_GAME POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/dependencies/bin $<TARGET_FILE_DIR:CPP_GAME>
 )
+
