@@ -194,6 +194,9 @@ namespace graphics
 	/** Terminates the message processing loop of the engine and returns control to the caller of startMessageLoop().
 	 *
 	 */
+
+	void draw(float x, float y, const Brush & brush, float pointSize);
+
 	void stopMessageLoop();
 
 	/** Defines the extents of the drawing canvas in the custom units used by the application.

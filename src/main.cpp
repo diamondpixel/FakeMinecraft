@@ -1,5 +1,4 @@
 #include <thread>
-
 #include "graphics.h"
 #include "./graphicsEngine3D/3DEngine.cpp"
 
@@ -9,6 +8,7 @@ GraphicsEngine3D *engine = nullptr;
 int main() {
 
     engine = new GraphicsEngine3D(); // Initialize the engine
+
     engine->createWindow(1200,600,"Hello world");
     setDrawFunction([]() { engine->draw(); });
     setUpdateFunction([](float deltaTime) { engine->update(deltaTime); });
