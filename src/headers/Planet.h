@@ -5,31 +5,55 @@
 #include <string>
 #include <queue>
 #include <glm/glm.hpp>
+#include <thread>
+#include <mutex>
 
-#include "Chunk.h"
-#include "TupleHash.h"
+#include "../Chunk/headers/ChunkPos.h"
+#include "../Chunk/headers/ChunkData.h"
+#include "../Chunk/headers/Chunk.h"
+#include "./../Chunk/headers/ChunkPosHash.h"
+
+constexpr unsigned int CHUNK_SIZE = 32;
 
 class Planet
 {
-// Methods
+    // Methods
 public:
-	Planet();
-	~Planet();
+    Planet(Shader* solidShader, Shader* waterShader, Shader* billboardShader);
+    ~Planet();
 
-	std::vector<unsigned int> getChunkData(int chunkX, int chunkY, int chunkZ);
-	void update(float camX, float camY, float camZ, unsigned int modelLoc);
+    ChunkData* getChunkData(ChunkPos chunkPos);
+    void update(glm::vec3 cameraPos);
 
-// Variables
-public:
-	static Planet* planet;
-	unsigned int numChunks = 0, numChunksRendered = 0;
+    Chunk* getChunk(ChunkPos chunkPos);
+    void clearChunkQueue();
 
 private:
-	std::unordered_map<std::tuple<int, int, int>, Chunk> chunks;
-	std::queue<glm::vec3> chunkQueue;
-	int renderDistance = 20;
-	int renderHeight = 1;
-	unsigned int chunkSize = 32;
-	unsigned int chunksLoading = 0;
-	int lastCamX = -100, lastCamY = -100, lastCamZ = -100;
+    void chunkThreadUpdate();
+
+    // Variables
+public:
+    static Planet* planet;
+    unsigned int numChunks = 0, numChunksRendered = 0;
+    int renderDistance = 5;
+    int renderHeight = 3;
+
+private:
+    std::unordered_map<ChunkPos, Chunk*, ChunkPosHash> chunks;
+    std::unordered_map<ChunkPos, ChunkData*, ChunkPosHash> chunkData;
+    std::queue<ChunkPos> chunkQueue;
+    std::queue<ChunkPos> chunkDataQueue;
+    std::queue<ChunkPos> chunkDataDeleteQueue;
+    unsigned int chunksLoading = 0;
+    int lastCamX = -100, lastCamY = -100, lastCamZ = -100;
+    int camChunkX = -100, camChunkY = -100, camChunkZ = -100;
+
+    Shader* solidShader;
+    Shader* waterShader;
+    Shader* billboardShader;
+
+    std::thread chunkThread;
+    std::mutex chunkMutex;
+
+    bool shouldEnd = false;
 };

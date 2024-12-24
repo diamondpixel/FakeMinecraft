@@ -33,8 +33,8 @@ void Camera::processKeyboard(Camera_Movement direction, float deltaTime) {
     if (direction == BACKWARD) { Position -= Front * velocity; }
     if (direction == LEFT) { Position -= Right * velocity; }
     if (direction == RIGHT) { Position += Right * velocity; }
-    if (direction == UP) { Position += Up * velocity; }
-    if (direction == DOWN) { Position -= Up * velocity; }
+    if (direction == UP) { Position += glm::vec3(0, 1, 0) * velocity; }
+    if (direction == DOWN) { Position -= glm::vec3(0, 1, 0) * velocity; }
 }
 
 // processes input received from a mouse input system. Expects the offset value in both the x and y direction.

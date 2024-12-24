@@ -8,6 +8,12 @@
 
 #ifndef GAMEOBJECT_H
 #define GAMEOBJECT_H
+
+enum GameState {
+    PLAYING,
+    PAUSED
+};
+
 class GameObject {
 public:
   virtual void init();
@@ -15,6 +21,7 @@ public:
   GameObject(const GameObject &) = delete;
   GameObject &operator=(const GameObject &) = delete;
 private:
+  GameState gameState;
   float lastX = 400, lastY = 300;
   bool firstMouse = true;
   GameObject(float x, float y, const std::string &windowName);
@@ -24,9 +31,12 @@ private:
   void mouseCallBack();
   void keyboardCallBack(float deltaTime);
   Camera camera;
-  Shader shader;
   graphics::TextureManager *textureManager;
   glm::vec3 inputDirection;
+
+  Shader worldShader;
+  Shader billboardShader;
+  Shader fluidShader;
 
   };
 

@@ -3,8 +3,9 @@
 #include <vector>
 #include "NoiseSettings.h"
 #include "SurfaceFeature.h"
+#include "../Chunk/headers/ChunkPos.h"
 
 namespace WorldGen
 {
-	void generateChunkData(int chunkX, int chunkY, int chunkZ, int chunkSize, std::vector<unsigned int>* chunkData);
+	void generateChunkData(ChunkPos chunkPos, uint16_t* chunkData);
 }
