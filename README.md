@@ -18,7 +18,6 @@ The tools bellow were used to create my game:
 
 - The game requires [Cmake](https://cmake.org/download/) in order to compile.
 - You need the custom image of [SGG](https://github.com/diamondpixel/sgg) library.
--  - Once you _COMPILE_, copy everything from ./lib file into ./dependencies/lib/.
 -  - Copy everything from [./3rdparty/bin](https://github.com/diamondpixel/sgg/tree/main/3rdparty/bin) to ./dependencies/bin/.
 - Also you need the MVSC compiler, trying to compile with MinGW will result in errors.
 
