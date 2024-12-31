@@ -1,4 +1,4 @@
-## _Fake Minecraft_ ![](https://geps.dev/progress/80)
+## _Fake Minecraft_ ![](https://geps.dev/progress/90)
 
 A 3D voxel-based game inspired by Minecraft, built using a custom version of the SGG (Simple Game Graphics) library. This project aims to recreate the core features of Minecraft, including terrain generation, block placement, and more, while allowing for experimentation with custom mechanics and optimizations.
 
