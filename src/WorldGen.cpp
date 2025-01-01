@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <OpenSimplexNoise.hh>
+#include <random>
 
 #include "headers/Blocks.h"
 #include "headers/Planet.h"
@@ -12,8 +13,8 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint16_t* chunkData)
 	static int chunkSize = CHUNK_SIZE;
 
 	// Init noise
-	static OSN::Noise<2> noise2D;
-	static OSN::Noise<3> noise3D;
+	static auto noise2D = OSN::Noise<2>(20);
+	static auto noise3D = OSN::Noise<3>(20);
 
 	// Init noise settings
 	static NoiseSettings surfaceSettings[]{
@@ -348,7 +349,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint16_t* chunkData)
 					bool blockSet = false;
 					for (int i = 0; i < oreSettingsLength; i++)
 					{
-						if (y + startY > oreSettings[i].maxHeight)
+						if (y + startY > oreSettings[i].maxHeight || y + startY < -48)
 							continue;
 
 						float noiseOre = noise3D.eval(
@@ -377,8 +378,10 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint16_t* chunkData)
 								chunkData[currentIndex] = Blocks::DIRT_BLOCK;
 							else
 								chunkData[currentIndex] = Blocks::SAND;
-						else
+						else if (y + startY > -50)
 							chunkData[currentIndex] = Blocks::STONE_BLOCK;
+						else
+							chunkData[currentIndex] = Blocks::AIR;
 					}
 				}
 				currentIndex++;

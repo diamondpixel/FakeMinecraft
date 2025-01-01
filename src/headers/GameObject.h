@@ -6,6 +6,8 @@
 #include "Planet.h"
 #include <Shader.h>
 
+#include "Slider.h"
+
 #ifndef GAMEOBJECT_H
 #define GAMEOBJECT_H
 
@@ -38,6 +40,7 @@ private:
     GameState gameState;
     float lastX = 400, lastY = 300;
     bool firstMouse = true;
+    bool fullScreen = false;
 
     GameObject(float x, float y, const std::string &windowName);
 
@@ -58,6 +61,9 @@ private:
     Shader billboardShader;
     Shader fluidShader;
     Shader outlineShader;
+
+    Slider fpsSlider;
+
 };
 
 

@@ -49,9 +49,6 @@ GameObject::~GameObject() {
 void GameObject::init() {
     // Initialize the graphics system
     graphics::createWindow(windowX, windowY, "");
-    graphics::setFullScreen(false);
-    graphics::setVSYNC(false);
-
 
     // Camera and shader initialization
     std::string path = "../assets/sprites/block_map.png";
@@ -104,6 +101,7 @@ void GameObject::init() {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) 0);
 
+    fpsSlider = Slider(windowX / 2, windowY / 2, 300.0f, 20.0f, 0.0f, 100.0f, 50.0f);
 
     Planet::planet = new Planet(&worldShader, &fluidShader, &billboardShader);
 
@@ -179,13 +177,9 @@ void GameObject::init() {
     graphics::setDrawFunction([this] {
         //Crosshair rendering
         graphics::Brush bck;
-        bck.fill_color[0] = 0.7;
-        bck.fill_color[1] = 0.7;
-        bck.fill_color[2] = 0.7;
-        if (gameState.state == PLAYING) {
-            drawRect(windowX / 2, windowY / 2, 5, 25, bck);
-            drawRect(windowX / 2, windowY / 2, 25, 5, bck);
-        }
+
+        setCanvasScaleMode(graphics::CANVAS_SCALE_FIT);
+        graphics::setCanvasSize(windowX, windowY);
 
         // Check if player is underwater
         int blockX = camera.Position.x < 0 ? camera.Position.x - 1 : camera.Position.x;
@@ -208,13 +202,31 @@ void GameObject::init() {
                 localBlockZ);
 
             if (Blocks::blocks[blockType].blockType == Block::LIQUID) {
-                graphics::Brush bck;
                 bck.fill_color[0] = 0.0;
                 bck.fill_color[1] = 0.0;
                 bck.fill_color[2] = 0.45;
                 bck.fill_opacity = 0.6;
                 drawRect(windowX / 2, windowY / 2, windowX, windowY, bck);
             }
+        }
+
+        switch (gameState.state) {
+            case PLAYING:
+                bck.fill_color[0] = 0.7;
+                bck.fill_color[1] = 0.7;
+                bck.fill_color[2] = 0.7;
+                bck.fill_opacity = 1.0f;
+                drawRect(windowX / 2, windowY / 2, 5, 25, bck);
+                drawRect(windowX / 2, windowY / 2, 25, 5, bck);
+                break;
+            case PAUSED:
+                bck.fill_color[0] = 0.2;
+                bck.fill_color[1] = 0.2;
+                bck.fill_color[2] = 0.2;
+                bck.fill_opacity = 0.9f;
+                drawRect(windowX / 2, windowY / 2, windowX, windowY, bck);
+                fpsSlider.draw();
+                break;
         }
     });
 
@@ -236,75 +248,86 @@ void GameObject::mouseCallBack() {
     graphics::MouseState ms;
     getMouseState(ms);
 
-    if (gameState.state == PAUSED) {
-        return;
-    }
+    switch (gameState.state) {
+        case PLAYING: {
+            // Handle mouse movement
+            float xoffset = static_cast<float>(ms.rel_x);
+            float yoffset = static_cast<float>(-ms.rel_y);
+            camera.processMouseMovement(xoffset, yoffset, true);
 
-    // Handle mouse movement
-    float xoffset = static_cast<float>(ms.rel_x);
-    float yoffset = static_cast<float>(-ms.rel_y);
-    camera.processMouseMovement(xoffset, yoffset, true);
-
-    // Handle mouse button press events
-    if (ms.button_left_pressed) {
-        auto result = Physics::raycast(camera.Position, camera.Front, 5);
-        if (!result.hit)
-            return;
-        result.chunk->updateBlock(result.localBlockX, result.localBlockY, result.localBlockZ, 0);
-    }
-
-    if (ms.button_middle_pressed) {
-        auto result = Physics::raycast(camera.Position, camera.Front, 5);
-        if (!result.hit)
-            return;
-        gameState.selectedBlock = result.chunk->getBlockAtPos(result.localBlockX, result.localBlockY,
-                                                              result.localBlockZ);
-    }
-
-    if (ms.button_right_pressed) {
-        auto result = Physics::raycast(camera.Position, camera.Front, 5);
-        if (!result.hit)
-            return;
-
-        float distX = result.hitPos.x - (result.blockX + .5f);
-        float distY = result.hitPos.y - (result.blockY + .5f);
-        float distZ = result.hitPos.z - (result.blockZ + .5f);
-
-        int blockX = result.blockX;
-        int blockY = result.blockY;
-        int blockZ = result.blockZ;
-
-        // Determine which face to place on
-        if (abs(distX) > abs(distY) && abs(distX) > abs(distZ))
-            blockX += (distX > 0 ? 1 : -1);
-        else if (abs(distY) > abs(distX) && abs(distY) > abs(distZ))
-            blockY += (distY > 0 ? 1 : -1);
-        else
-            blockZ += (distZ > 0 ? 1 : -1);
-
-        int chunkX = blockX < 0 ? floorf(blockX / (float) CHUNK_SIZE) : blockX / (int) CHUNK_SIZE;
-        int chunkY = blockY < 0 ? floorf(blockY / (float) CHUNK_SIZE) : blockY / (int) CHUNK_SIZE;
-        int chunkZ = blockZ < 0 ? floorf(blockZ / (float) CHUNK_SIZE) : blockZ / (int) CHUNK_SIZE;
-
-        int localBlockX = blockX - (chunkX * CHUNK_SIZE);
-        int localBlockY = blockY - (chunkY * CHUNK_SIZE);
-        int localBlockZ = blockZ - (chunkZ * CHUNK_SIZE);
-
-        Chunk *chunk = Planet::planet->getChunk(ChunkPos(chunkX, chunkY, chunkZ));
-        uint16_t blockToReplace = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
-        uint16_t blockBellow = chunk->getBlockAtPos(localBlockX, localBlockY - 1, localBlockZ); // Check directly below
-
-        // Check if the target position is air or liquid
-        if (blockToReplace == 0 || Blocks::blocks[blockToReplace].blockType == Block::LIQUID) {
-            // If the selected block is a billboard-type block
-            if (Blocks::blocks[gameState.selectedBlock].blockType == Block::BILLBOARD) {
-                if (Blocks::blocks[blockBellow].blockName != "Grass Block") {
+            // Handle mouse button press events
+            if (ms.button_left_pressed || ms.button_middle_pressed || ms.button_right_pressed) {
+                // Perform the raycast only once
+                auto result = Physics::raycast(camera.Position, camera.Front, 5);
+                if (!result.hit)
                     return;
+
+                if (ms.button_left_pressed) {
+                    // Handle left-click (destroy block)
+                    result.chunk->updateBlock(result.localBlockX, result.localBlockY, result.localBlockZ, 0);
+                }
+
+                if (ms.button_middle_pressed) {
+                    // Handle middle-click (select block)
+                    gameState.selectedBlock = result.chunk->getBlockAtPos(result.localBlockX, result.localBlockY,
+                                                                          result.localBlockZ);
+                }
+
+                if (ms.button_right_pressed) {
+                    // Handle right-click (place block)
+                    float distX = result.hitPos.x - (result.blockX + 0.5f);
+                    float distY = result.hitPos.y - (result.blockY + 0.5f);
+                    float distZ = result.hitPos.z - (result.blockZ + 0.5f);
+
+                    int blockX = result.blockX;
+                    int blockY = result.blockY;
+                    int blockZ = result.blockZ;
+
+                    // Determine which face to place on
+                    if (abs(distX) > abs(distY) && abs(distX) > abs(distZ))
+                        blockX += (distX > 0 ? 1 : -1);
+                    else if (abs(distY) > abs(distX) && abs(distY) > abs(distZ))
+                        blockY += (distY > 0 ? 1 : -1);
+                    else
+                        blockZ += (distZ > 0 ? 1 : -1);
+
+                    int chunkX = blockX < 0 ? floorf(blockX / (float) CHUNK_SIZE) : blockX / (int) CHUNK_SIZE;
+                    int chunkY = blockY < 0 ? floorf(blockY / (float) CHUNK_SIZE) : blockY / (int) CHUNK_SIZE;
+                    int chunkZ = blockZ < 0 ? floorf(blockZ / (float) CHUNK_SIZE) : blockZ / (int) CHUNK_SIZE;
+
+                    int localBlockX = blockX - (chunkX * CHUNK_SIZE);
+                    int localBlockY = blockY - (chunkY * CHUNK_SIZE);
+                    int localBlockZ = blockZ - (chunkZ * CHUNK_SIZE);
+
+                    Chunk *chunk = Planet::planet->getChunk(ChunkPos(chunkX, chunkY, chunkZ));
+                    uint16_t blockToReplace = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
+                    uint16_t blockBelow = chunk->getBlockAtPos(localBlockX, localBlockY - 1, localBlockZ);
+
+                    // Check if the target position is air or liquid
+                    if (blockToReplace == 0 || Blocks::blocks[blockToReplace].blockType == Block::LIQUID) {
+                        // If the selected block is a billboard-type block
+                        if (Blocks::blocks[gameState.selectedBlock].blockType == Block::BILLBOARD) {
+                            if (Blocks::blocks[blockBelow].blockName != "Grass Block") {
+                                return;
+                            }
+                        }
+
+                        // Handle block placement normally
+                        chunk->updateBlock(localBlockX, localBlockY, localBlockZ, gameState.selectedBlock);
+                    }
                 }
             }
+            break;
+        }
+        case PAUSED: {
+            // Q&A 😭
+            ms.button_left_down
+                ? fpsSlider.startDragging(ms.cur_pos_x, ms.cur_pos_y)
+                : fpsSlider.stopDragging();
 
-            // Handle other block placement normally
-            chunk->updateBlock(localBlockX, localBlockY, localBlockZ, gameState.selectedBlock);
+            //Action
+            fpsSlider.update(ms.cur_pos_x);
+            break;
         }
     }
 }
@@ -322,4 +345,13 @@ void GameObject::keyboardCallBack(float deltaTime) {
     if (getKeyState(graphics::SCANCODE_D)) camera.processKeyboard(RIGHT, deltaTime * .01f);
     if (getKeyState(graphics::SCANCODE_SPACE)) camera.processKeyboard(UP, deltaTime * .01f);
     if (getKeyState(graphics::SCANCODE_LSHIFT)) camera.processKeyboard(DOWN, deltaTime * .01f);
+    if (getKeyState(graphics::SCANCODE_F11)) {
+        if (fullScreen) {
+            fullScreen = false;
+            graphics::setFullScreen(false);
+        } else {
+            fullScreen = true;
+            graphics::setFullScreen(true);
+        }
+    }
 }
