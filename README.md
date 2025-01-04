@@ -5,7 +5,6 @@ A 3D voxel-based game inspired by Minecraft, built using a custom version of the
 ## Features
 - _Voxel Terrain: Infinite terrain generation using procedural algorithms._
 - _Block Placement & Destruction: Players can interact with the environment by placing and removing blocks._
-- _Optimized Rendering: Efficient rendering of large numbers of blocks with minimal performance impact._
 
 ## Tech
 
