@@ -8,7 +8,7 @@ Physics::RaycastResult Physics::raycast(const glm::vec3 startPos, const glm::vec
 
 	while (currentDistance < maxDistance)
 	{
-		currentDistance += Physics::RAY_STEP;
+		currentDistance += RAY_STEP;
 		if (currentDistance > maxDistance)
 			currentDistance = maxDistance;
 

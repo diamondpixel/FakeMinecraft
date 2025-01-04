@@ -14,6 +14,7 @@
 #include "./../Chunk/headers/ChunkPosHash.h"
 
 constexpr unsigned int CHUNK_SIZE = 32;
+inline int MIN_HEIGHT = -50;
 inline long SEED = 0;
 
 class Planet
@@ -28,15 +29,13 @@ public:
 
 private:
     void chunkThreadUpdate();
-
-    void addSurroundingChunks(int r, int y);
-
     // Variables
 public:
     static Planet* planet;
     unsigned int numChunks = 0, numChunksRendered = 0;
     int renderDistance = 5;
     int renderHeight = 3;
+
 
 
 private:

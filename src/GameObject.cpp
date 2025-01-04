@@ -64,66 +64,11 @@ GameObject::~GameObject() {
 }
 
 void GameObject::init() {
-    // Initialize the graphics system
-    graphics::createWindow(windowX, windowY, "");
-    graphics::setFont("../assets/fonts/Arial.ttf");
+    initializeGraphics();
+    initializeShaders();
+    initializeUIElements();
 
-    // Camera and shader initialization
-    std::string path = "../assets/sprites/block_map.png";
-    camera = Camera(glm::vec3(0.0f, 25.0f, 0.0f));
-
-    textureManager = &graphics::TextureManager::getInstance();
-
-    graphics::Texture *texture = textureManager->createTexture(
-        path, false, [&](graphics::Texture &tex) {
-            stbi_set_flip_vertically_on_load(true);
-            unsigned char *data = stbi_load(
-                path.c_str(), (int *) tex.getWidthPointer(), (int *) tex.getHeightPointer(),
-                (int *) tex.getChannelsPointer(), 4 // Force RGBA
-            );
-
-            if (!data) {
-                std::cerr << "Failed to load texture: " << path << std::endl;
-                return;
-            }
-
-            std::vector<unsigned char> *buffer = tex.getBufferPointer();
-            if (buffer) {
-                buffer->assign(data, data + tex.getWidth() * tex.getHeight() * 4); // 4 channels (RGBA)
-            }
-            stbi_image_free(data);
-            glGenTextures(1, tex.getIDPointer());
-            glBindTexture(GL_TEXTURE_2D, tex.getID());
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexImage2D(
-                GL_TEXTURE_2D, 0, GL_RGBA, tex.getWidth(), tex.getHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer->data()
-            );
-            glGenerateMipmap(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, 0);
-        });
-    textureManager->bindTexture(texture, 0);
-
-    //Init all shaders ---------------------------------------------------------------------------------------------------------
-    worldShader = Shader("../assets/shaders/world_vertex_shader.glsl",
-                         "../assets/shaders/world_fragment_shader.glsl");
-    worldShader["SMART_texMultiplier"] = 0.0625f;
-    auto value = textureManager->getBoundSlotOfTexture(texture);
-    worldShader["SMART_tex"] = value;
-    //--------------------------------------------------------------------------------------------------------------------------
-    billboardShader = Shader("../assets/shaders/billboard_vertex_shader.glsl",
-                             "../assets/shaders/billboard_fragment_shader.glsl");
-    billboardShader["SMART_texMultiplier"] = 0.0625f;
-    billboardShader["SMART_tex"] = textureManager->getBoundSlotOfTexture(texture);
-    //--------------------------------------------------------------------------------------------------------------------------
-    fluidShader = Shader("../assets/shaders/fluids_vertex_shader.glsl",
-                         "../assets/shaders/fluids_fragment_shader.glsl");
-    fluidShader["SMART_texMultiplier"] = 0.0625f;
-    fluidShader["SMART_tex"] = textureManager->getBoundSlotOfTexture(texture);
-    //--------------------------------------------------------------------------------------------------------------------------
-    outlineShader = Shader("../assets/shaders/block_outline_vertex_shader.glsl",
-                           "../assets/shaders/block_outline_fragment_shader.glsl");
-    //--------------------------------------------------------------------------------------------------------------------------
+    Planet::planet = new Planet(&worldShader, &fluidShader, &billboardShader);
 
     unsigned int outlineVAO, outlineVBO;
     glGenVertexArrays(1, &outlineVAO);
@@ -134,54 +79,17 @@ void GameObject::init() {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) 0);
 
-    fullscreenCheckBox = Checkbox(windowX / 2, windowY / 2, 50);
-    fpsSlider = Slider(windowX / 2 - 100, windowY / 2 + 50.0f, 200.0f, 20.0f, 55.0f, 361.0f, 144.0f);
-    renderDistanceSlider = Slider(windowX / 2 - 100, windowY / 2 + 130.0f, 200.0f, 20.0f, 1.0f, 30.f, 5.f);
-    seedBox = TypeBox(windowX / 2 - 100, windowY / 2 + 230.0f, 200.0f, 20.0f);
 
-    Planet::planet = new Planet(&worldShader, &fluidShader, &billboardShader);
-
-    graphics::setPreDrawFunction([this,outlineVAO, texture] {
-        textureManager->bindTexture(texture, 0);
+    graphics::setPreDrawFunction([this,outlineVAO] {
         std::string window_name
                 = "Fake Minecraft / FPS: "
                   + std::to_string(graphics::getFPS())
                   + " Total Chunks: "
                   + std::to_string(Planet::planet->numChunks);
 
-        graphics::setWindowName(window_name.c_str()); {
-            glClearColor(0.6f, 0.8f, 1.0f, 1.0f);
-            glEnable(GL_DEPTH_TEST);
-            glDepthMask(GL_TRUE);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_BACK);
-            glFrontFace(GL_CW);
-            glDisable(GL_SCISSOR_TEST);
-            glDisable(GL_BLEND);
-        }
-        glm::mat4 view = camera.getViewMatrix();
-        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), windowX / windowY, 0.1f, 100.0f);
-        //--------------------------------------------
-        worldShader.use(true);
-        worldShader["SMART_view"] = view;
-        worldShader["SMART_projection"] = projection;
-        //--------------------------------------------
-        billboardShader.use(true);
-        billboardShader["SMART_view"] = view;
-        billboardShader["SMART_projection"] = projection;
-        //--------------------------------------------
-        fluidShader.use(true);
-        fluidShader["SMART_view"] = view;
-        fluidShader["SMART_projection"] = projection;
-        fluidShader["SMART_time"] = SDL_GetTicks() / 1000.0f;
-        //--------------------------------------------
-        outlineShader.use(true);
-        outlineShader["SMART_view"] = view;
-        outlineShader["SMART_projection"] = projection;
-        //--------------------------------------------
+        graphics::setWindowName(window_name.c_str());
+        textureManager->bindTexture(gameTexture, 0);
+        setupRenderingState();
 
         if (fpsCap == 55) {
             graphics::setVSYNC(true);
@@ -194,9 +102,11 @@ void GameObject::init() {
             graphics::setTargetFPS(-1);
         }
 
+        updateShaders();
+
         Planet::planet->update(camera.Position); {
             outlineShader.use(true);
-            auto result = Physics::raycast(camera.Position, camera.Front, 5);
+            auto result = Physics::raycast(camera.Position, camera.Front, 5); //THIS IS COLLISION TECHNICALLY
             if (result.hit) {
                 outlineShader["model"] = glm::vec4(result.blockX, result.blockY, result.blockZ, 1);
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
@@ -218,7 +128,6 @@ void GameObject::init() {
         fpsSlider.setDimensions(windowX / 2 - 100, windowY / 2 + 70.0f);
         fullscreenCheckBox.setDimensions(windowX / 2, windowY / 2);
         seedBox.setDimensions(windowX / 2, windowY / 2 + 160.0f);
-
         windowX = width;
         windowY = height;
     });
@@ -246,11 +155,17 @@ void GameObject::init() {
                 localBlockY,
                 localBlockZ);
 
-            if (Blocks::blocks[blockType].blockType == Block::LIQUID) {
+            if (Blocks::blocks[blockType].blockName == "WATER") {
                 bck.fill_color[0] = 0.0;
                 bck.fill_color[1] = 0.0;
                 bck.fill_color[2] = 0.45;
                 bck.fill_opacity = 0.6;
+               drawRect(windowX / 2, windowY / 2, windowX, windowY, bck);
+            } else if (Blocks::blocks[blockType].blockName == "LAVA") {
+                bck.fill_color[0] = 1.0;
+                bck.fill_color[1] = 0.5;
+                bck.fill_color[2] = 0.0;
+                bck.fill_opacity = 0.4;
                 drawRect(windowX / 2, windowY / 2, windowX, windowY, bck);
             }
         }
@@ -301,13 +216,116 @@ void GameObject::init() {
     graphics::setUpdateFunction([this](float dt) {
         keyboardCallBack(dt);
         mouseCallBack();
-        gameState.state == PAUSED
-            ? seedBox.handleInput()
-            : [] {
-            };
     });
 
     graphics::startMessageLoop();
+}
+
+void GameObject::initializeGraphics() {
+    // Initialize the graphics system
+    graphics::createWindow(windowX, windowY, "");
+    graphics::setFont("../assets/fonts/Arial.ttf");
+    std::string path = "../assets/sprites/block_map.png";
+
+    camera = Camera(glm::vec3(0.0f, 25.0f, 0.0f));
+    textureManager = &graphics::TextureManager::getInstance();
+
+    gameTexture = textureManager->createTexture(
+        path, false, [&](graphics::Texture &tex) {
+            stbi_set_flip_vertically_on_load(true);
+            unsigned char *data = stbi_load(
+                path.c_str(), reinterpret_cast<int *>(tex.getWidthPointer()),
+                reinterpret_cast<int *>(tex.getHeightPointer()),
+                reinterpret_cast<int *>(tex.getChannelsPointer()), 4 // Force RGBA
+            );
+
+            if (!data) {
+                std::cerr << "Failed to load texture: " << path << std::endl;
+                return;
+            }
+
+            std::vector<unsigned char> *buffer = tex.getBufferPointer();
+            if (buffer) {
+                buffer->assign(data, data + tex.getWidth() * tex.getHeight() * 4); // 4 channels (RGBA)
+            }
+            stbi_image_free(data);
+            glGenTextures(1, tex.getIDPointer());
+            glBindTexture(GL_TEXTURE_2D, tex.getID());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexImage2D(
+                GL_TEXTURE_2D, 0, GL_RGBA, tex.getWidth(), tex.getHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer->data()
+            );
+            glGenerateMipmap(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        });
+    textureManager->bindTexture(gameTexture, 0);
+}
+
+void GameObject::initializeShaders() {
+    auto slotBound = textureManager->getBoundSlotOfTexture(gameTexture);
+    //Init all shaders ---------------------------------------------------------------------------------------------------------
+    worldShader = Shader("../assets/shaders/world_vertex_shader.glsl",
+                         "../assets/shaders/world_fragment_shader.glsl");
+    worldShader["SMART_texMultiplier"] = 0.0625f;
+    worldShader["SMART_tex"] = slotBound;
+    //--------------------------------------------------------------------------------------------------------------------------
+    billboardShader = Shader("../assets/shaders/billboard_vertex_shader.glsl",
+                             "../assets/shaders/billboard_fragment_shader.glsl");
+    billboardShader["SMART_texMultiplier"] = 0.0625f;
+    billboardShader["SMART_tex"] = slotBound;
+    //--------------------------------------------------------------------------------------------------------------------------
+    fluidShader = Shader("../assets/shaders/fluids_vertex_shader.glsl",
+                         "../assets/shaders/fluids_fragment_shader.glsl");
+    fluidShader["SMART_texMultiplier"] = 0.0625f;
+    fluidShader["SMART_tex"] = slotBound;
+    //--------------------------------------------------------------------------------------------------------------------------
+    outlineShader = Shader("../assets/shaders/block_outline_vertex_shader.glsl",
+                           "../assets/shaders/block_outline_fragment_shader.glsl");
+    //--------------------------------------------------------------------------------------------------------------------------
+}
+
+void GameObject::initializeUIElements() {
+    fullscreenCheckBox = Checkbox(windowX / 2, windowY / 2, 50);
+    fpsSlider = Slider(windowX / 2 - 100, windowY / 2 + 50.0f, 200.0f, 20.0f, 55.0f, 361.0f, 144.0f);
+    renderDistanceSlider = Slider(windowX / 2 - 100, windowY / 2 + 130.0f, 200.0f, 20.0f, 1.0f, 30.f, 5.f);
+    seedBox = TypeBox(windowX / 2 - 100, windowY / 2 + 230.0f, 200.0f, 20.0f);
+}
+
+void GameObject::updateShaders() {
+    glm::mat4 view = camera.getViewMatrix();
+    glm::mat4 projection = glm::perspective(90.0f, windowX / windowY, 0.1f, 100.0f);
+
+    worldShader.use(true);
+    worldShader["SMART_view"] = view;
+    worldShader["SMART_projection"] = projection;
+
+    billboardShader.use(true);
+    billboardShader["SMART_view"] = view;
+    billboardShader["SMART_projection"] = projection;
+
+    fluidShader.use(true);
+    fluidShader["SMART_view"] = view;
+    fluidShader["SMART_projection"] = projection;
+    fluidShader["SMART_time"] = SDL_GetTicks() / 1000.0f;
+
+    outlineShader.use(true);
+    outlineShader["SMART_view"] = view;
+    outlineShader["SMART_projection"] = projection;
+}
+
+void GameObject::setupRenderingState() {
+    glClearColor(0.6f, 0.8f, 1.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CW);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
 }
 
 GameObject &GameObject::getInstance(float x, float y, const std::string &windowName) {
@@ -316,122 +334,135 @@ GameObject &GameObject::getInstance(float x, float y, const std::string &windowN
 }
 
 void GameObject::mouseCallBack() {
-    graphics::MouseState ms;
+    graphics::MouseState ms{};
     getMouseState(ms);
 
     switch (gameState.state) {
-        case PLAYING: {
-            float xoffset = static_cast<float>(ms.rel_x);
-            float yoffset = static_cast<float>(-ms.rel_y);
-            camera.processMouseMovement(xoffset, yoffset, true);
-            if (ms.button_left_pressed || ms.button_middle_pressed || ms.button_right_pressed) {
-                auto result = Physics::raycast(camera.Position, camera.Front, 5);
-                if (!result.hit)
-                    return;
+        case PLAYING:
+            handlePlayingMouseInput(ms);
+            break;
+        case PAUSED:
+            handlePausedMouseInput(ms);
+            break;
+    }
+}
 
-                if (ms.button_left_pressed) {
-                    result.chunk->updateBlock(result.localBlockX, result.localBlockY, result.localBlockZ, 0);
-                }
+void GameObject::handlePausedMouseInput(graphics::MouseState &ms) {
+    if (ms.button_left_pressed) {
+        fullscreenCheckBox.handleClick(ms.cur_pos_x, ms.cur_pos_y,
+                                       [] { graphics::setFullScreen(true); },
+                                       [] { graphics::setFullScreen(false); });
+        return;
+    }
 
-                if (ms.button_middle_pressed) {
-                    gameState.selectedBlock = result.chunk->getBlockAtPos(result.localBlockX, result.localBlockY,
-                                                                          result.localBlockZ);
-                }
+    if (ms.button_left_down) {
+        fpsSlider.startDragging(ms.cur_pos_x, ms.cur_pos_y);
+        renderDistanceSlider.startDragging(ms.cur_pos_x, ms.cur_pos_y);
+    } else {
+        fpsSlider.stopDragging();
+        renderDistanceSlider.stopDragging();
+    }
+    //Action
+    renderDistanceSlider.update(ms.cur_pos_x, Planet::planet->renderDistance);
+    fpsSlider.update(ms.cur_pos_x, fpsCap);
+}
 
-                if (ms.button_right_pressed) {
-                    float distX = result.hitPos.x - (result.blockX + 0.5f);
-                    float distY = result.hitPos.y - (result.blockY + 0.5f);
-                    float distZ = result.hitPos.z - (result.blockZ + 0.5f);
+void GameObject::handlePlayingMouseInput(graphics::MouseState &ms) {
+    auto x_offset = static_cast<float>(ms.rel_x);
+    auto y_offset = static_cast<float>(-ms.rel_y);
+    camera.processMouseMovement(x_offset, y_offset, true);
+    if (ms.button_left_pressed || ms.button_middle_pressed || ms.button_right_pressed) {
+        auto result = Physics::raycast(camera.Position, camera.Front, 5);
+        if (!result.hit)
+            return;
 
-                    int blockX = result.blockX;
-                    int blockY = result.blockY;
-                    int blockZ = result.blockZ;
+        if (ms.button_left_pressed) {
+            result.chunk->updateBlock(result.localBlockX, result.localBlockY, result.localBlockZ, 0);
+        }
 
-                    if (abs(distX) > abs(distY) && abs(distX) > abs(distZ))
-                        blockX += (distX > 0 ? 1 : -1);
-                    else if (abs(distY) > abs(distX) && abs(distY) > abs(distZ))
-                        blockY += (distY > 0 ? 1 : -1);
-                    else
-                        blockZ += (distZ > 0 ? 1 : -1);
+        if (ms.button_middle_pressed) {
+            gameState.selectedBlock = result.chunk->getBlockAtPos(result.localBlockX, result.localBlockY,
+                                                                  result.localBlockZ);
+        }
 
-                    int chunkX = blockX < 0 ? floorf(blockX / (float) CHUNK_SIZE) : blockX / (int) CHUNK_SIZE;
-                    int chunkY = blockY < 0 ? floorf(blockY / (float) CHUNK_SIZE) : blockY / (int) CHUNK_SIZE;
-                    int chunkZ = blockZ < 0 ? floorf(blockZ / (float) CHUNK_SIZE) : blockZ / (int) CHUNK_SIZE;
+        if (ms.button_right_pressed) {
+            float distX = result.hitPos.x - (result.blockX + 0.5f);
+            float distY = result.hitPos.y - (result.blockY + 0.5f);
+            float distZ = result.hitPos.z - (result.blockZ + 0.5f);
 
-                    int localBlockX = blockX - (chunkX * CHUNK_SIZE);
-                    int localBlockY = blockY - (chunkY * CHUNK_SIZE);
-                    int localBlockZ = blockZ - (chunkZ * CHUNK_SIZE);
+            int blockX = result.blockX;
+            int blockY = result.blockY;
+            int blockZ = result.blockZ;
 
-                    Chunk *chunk = Planet::planet->getChunk(ChunkPos(chunkX, chunkY, chunkZ));
-                    uint16_t blockToReplace = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
-                    uint16_t blockBelow = chunk->getBlockAtPos(localBlockX, localBlockY - 1, localBlockZ);
-                    if (blockToReplace == 0 || Blocks::blocks[blockToReplace].blockType == Block::LIQUID) {
-                        if (Blocks::blocks[gameState.selectedBlock].blockType == Block::BILLBOARD) {
-                            if (Blocks::blocks[blockBelow].blockName != "Grass Block") {
-                                return;
-                            }
-                        }
-                        chunk->updateBlock(localBlockX, localBlockY, localBlockZ, gameState.selectedBlock);
+            if (abs(distX) > abs(distY) && abs(distX) > abs(distZ))
+                blockX += (distX > 0 ? 1 : -1);
+            else if (abs(distY) > abs(distX) && abs(distY) > abs(distZ))
+                blockY += (distY > 0 ? 1 : -1);
+            else
+                blockZ += (distZ > 0 ? 1 : -1);
+
+            int chunkX = blockX < 0 ? floorf(blockX / (float) CHUNK_SIZE) : blockX / (int) CHUNK_SIZE;
+            int chunkY = blockY < 0 ? floorf(blockY / (float) CHUNK_SIZE) : blockY / (int) CHUNK_SIZE;
+            int chunkZ = blockZ < 0 ? floorf(blockZ / (float) CHUNK_SIZE) : blockZ / (int) CHUNK_SIZE;
+
+            int localBlockX = blockX - (chunkX * CHUNK_SIZE);
+            int localBlockY = blockY - (chunkY * CHUNK_SIZE);
+            int localBlockZ = blockZ - (chunkZ * CHUNK_SIZE);
+
+            Chunk *chunk = Planet::planet->getChunk(ChunkPos(chunkX, chunkY, chunkZ));
+            uint16_t blockToReplace = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
+            uint16_t blockBelow = chunk->getBlockAtPos(localBlockX, localBlockY - 1, localBlockZ);
+            if (blockToReplace == 0 || Blocks::blocks[blockToReplace].blockType == Block::LIQUID) {
+                if (Blocks::blocks[gameState.selectedBlock].blockType == Block::BILLBOARD) {
+                    if (Blocks::blocks[blockBelow].blockName != "GRASS_BLOCK") {
+                        return;
                     }
                 }
+                chunk->updateBlock(localBlockX, localBlockY, localBlockZ, gameState.selectedBlock);
             }
-            break;
-        }
-        case PAUSED: {
-            if (ms.button_left_pressed) {
-                fullscreenCheckBox.handleClick(ms.cur_pos_x, ms.cur_pos_y,
-                                               [] { graphics::setFullScreen(true); },
-                                               [] { graphics::setFullScreen(false); });
-                break;
-            }
-
-            if (ms.button_left_down) {
-                fpsSlider.startDragging(ms.cur_pos_x, ms.cur_pos_y);
-                renderDistanceSlider.startDragging(ms.cur_pos_x, ms.cur_pos_y);
-            } else {
-                fpsSlider.stopDragging();
-                renderDistanceSlider.stopDragging();
-            }
-            //Action
-            renderDistanceSlider.update(ms.cur_pos_x, Planet::planet->renderDistance);
-            fpsSlider.update(ms.cur_pos_x, fpsCap);
-            //-----------------------------------------------------------
-
-            break;
         }
     }
 }
 
-
 void GameObject::keyboardCallBack(float deltaTime) {
     static bool f11Pressed = false;
 
-    if (getKeyState(graphics::SCANCODE_ESCAPE))
-        SDL_GetRelativeMouseMode()
-            ? gameState.state = PLAYING
-            : gameState.state = PAUSED;
+    // Toggle game state with ESC
+    if (getKeyState(graphics::SCANCODE_ESCAPE)) {
+        gameState.state = SDL_GetRelativeMouseMode() ? PLAYING : PAUSED;
+    }
 
-    gameState.state == PAUSED ? deltaTime = 0 : deltaTime;
+    // Handle input when the game is paused
+    if (gameState.state == PAUSED) {
+        deltaTime = 0; // No movement in paused state
+        seedBox.handleInput();
+    } else {
+        const float movementSpeed = deltaTime * 0.02f;
+        const std::array<std::pair<graphics::scancode_t, Camera_Movement>, 6> keyBindings = {
+            std::make_pair(graphics::SCANCODE_W, FORWARD),
+            std::make_pair(graphics::SCANCODE_S, BACKWARD),
+            std::make_pair(graphics::SCANCODE_A, LEFT),
+            std::make_pair(graphics::SCANCODE_D, RIGHT),
+            std::make_pair(graphics::SCANCODE_SPACE, UP),
+            std::make_pair(graphics::SCANCODE_LSHIFT, DOWN)
+        };
 
-    if (getKeyState(graphics::SCANCODE_W)) camera.processKeyboard(FORWARD, deltaTime * .01f);
-    if (getKeyState(graphics::SCANCODE_S)) camera.processKeyboard(BACKWARD, deltaTime * .01f);
-    if (getKeyState(graphics::SCANCODE_A)) camera.processKeyboard(LEFT, deltaTime * .01f);
-    if (getKeyState(graphics::SCANCODE_D)) camera.processKeyboard(RIGHT, deltaTime * .01f);
-    if (getKeyState(graphics::SCANCODE_SPACE)) camera.processKeyboard(UP, deltaTime * .01f);
-    if (getKeyState(graphics::SCANCODE_LSHIFT)) camera.processKeyboard(DOWN, deltaTime * .01f);
+        for (const auto &[key, direction]: keyBindings) {
+            if (getKeyState(key)) {
+                camera.processKeyboard(direction, movementSpeed);
+            }
+        }
+    }
 
+    // Handle F11 fullscreen toggle
     if (getKeyState(graphics::SCANCODE_F11)) {
         if (!f11Pressed) {
             f11Pressed = true;
-            if (fullscreenCheckBox.isChecked()) {
-                fullscreenCheckBox.setChecked(false);
-                graphics::setFullScreen(false);
-            } else {
-                fullscreenCheckBox.setChecked(true);
-                graphics::setFullScreen(true);
-            }
+            bool isChecked = fullscreenCheckBox.isChecked();
+            fullscreenCheckBox.setChecked(!isChecked);
+            graphics::setFullScreen(!isChecked);
         }
     } else {
-        f11Pressed = false;
+        f11Pressed = false; // Reset when F11 is released
     }
 }

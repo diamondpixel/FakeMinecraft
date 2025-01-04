@@ -13,11 +13,11 @@ enum Camera_Movement {
 };
 
 // Default camera values
-const float YAW = -90.0f;
-const float PITCH = 0.0f;
-const float SPEED = 5.0f;
-const float SENSITIVITY = 0.1f;
-const float ZOOM = 70.0f;
+constexpr float YAW = -90.0f;
+constexpr float PITCH = 0.0f;
+constexpr float SPEED = 5.0f;
+constexpr float SENSITIVITY = 0.1f;
+constexpr float ZOOM = 70.0f;
 
 class Camera
 {
@@ -32,22 +32,14 @@ public:
 	float Yaw;
 	float Pitch;
 	// camera options
-	float MovementSpeed;
 	float MouseSensitivity;
-	float Zoom;
 
 	Camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = YAW, float pitch = PITCH);
-
 	Camera(float posX, float posY, float posZ, float upX, float upY, float upZ, float yaw, float pitch);
-
-
 	glm::mat4 getViewMatrix();
-
 	void processKeyboard(Camera_Movement direction, float deltaTime);
-
 	void processMouseMovement(float xoffset, float yoffset, GLboolean constrainPitch = true);
 
 private:
-	// calculates the front vector from the Camera's (updated) Euler Angles
 	void updateCameraVectors();
 };

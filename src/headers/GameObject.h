@@ -6,9 +6,9 @@
 #include "Planet.h"
 #include <Shader.h>
 
-#include "CheckBox.h"
-#include "Slider.h"
-#include "TypeBox.h"
+#include "./UI/headers/CheckBox.h"
+#include "./UI/headers/Slider.h"
+#include "./UI/headers/TypeBox.h"
 
 #ifndef GAMEOBJECT_H
 #define GAMEOBJECT_H
@@ -46,15 +46,36 @@ private:
 
     virtual ~GameObject();
 
+    void initializeGraphics();
+
+    void initializeShaders();
+
+    void initializeUIElements();
+
+    void setupCallbacks();
+
+    void handleDraw();
+
+    void updateShaders();
+
+    static void setupRenderingState();
+
     std::string window_name;
     float windowX, windowY;
 
     void mouseCallBack();
+
+    void handlePausedMouseInput(graphics::MouseState &ms);
+
+    void handlePlayingMouseInput(graphics::MouseState &ms);
+
     void keyboardCallBack(float deltaTime);
 
     Camera camera;
     graphics::TextureManager *textureManager;
     glm::vec3 inputDirection;
+
+    graphics::Texture* gameTexture;
 
     Shader worldShader;
     Shader billboardShader;

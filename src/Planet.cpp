@@ -39,7 +39,7 @@ void Planet::update(const glm::vec3& cameraPos) {
     numChunksRendered = 0;
 
     // Lock the chunk mutex
-    std::lock_guard<std::mutex> lock(chunkMutex);
+    std::lock_guard lock(chunkMutex);
 
     for (auto it = chunks.begin(); it != chunks.end();) {
         Chunk *chunk = it->second;

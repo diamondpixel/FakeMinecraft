@@ -28,9 +28,14 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
     static int caveSettingsLength = std::size(caveSettings);
 
     static NoiseSettings oreSettings[]{
-        {0.075f, 1.0f, 8.54f, .75f, 1, 0}
+        { 0.075f, 1.0f, 8.54f, .75f, 16, 0 }
     };
     static int oreSettingsLength = std::size(oreSettings);
+
+    static NoiseSettings lavaPocketSettings[]{
+        {0.075f, 1.5f, 5.54f, .79f, 14, 0}
+    };
+    static int lavaPocketSettingsLength = std::size(lavaPocketSettings);
 
     static SurfaceFeature surfaceFeatures[]{
         // Pond
@@ -457,7 +462,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                 // Cave noise
                 bool cave = false;
                 for (int i = 0; i < caveSettingsLength; i++) {
-                    if (y + startY > caveSettings[i].maxHeight || y + startY < -50)
+                    if (y + startY > caveSettings[i].maxHeight || y + startY < MIN_HEIGHT)
                         continue;
 
                     float noiseCaves = noise3D.eval(
@@ -482,12 +487,14 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                     else
                         chunkData[currentIndex] = Blocks::AIR;
                 } else if (cave)
-                    chunkData[currentIndex] = Blocks::AIR;
+                    y + startY == MIN_HEIGHT
+                        ? chunkData[currentIndex] = Blocks::BEDROCK
+                        : chunkData[currentIndex] = Blocks::AIR;
                 // Ground
                 else {
                     bool blockSet = false;
                     for (int i = 0; i < oreSettingsLength; i++) {
-                        if (y + startY > oreSettings[i].maxHeight || y + startY < -48)
+                        if (y + startY > oreSettings[i].maxHeight || y + startY < MIN_HEIGHT + 2)
                             continue;
 
                         float noiseOre = noise3D.eval(
@@ -498,6 +505,27 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
 
                         if (noiseOre > oreSettings[i].chance) {
                             chunkData[currentIndex] = oreSettings[i].block;
+                            blockSet = true;
+                            break;
+                        }
+                    }
+
+
+                    for (int i = 0; i < lavaPocketSettingsLength; i++) {
+                        if (y + startY > lavaPocketSettings[i].maxHeight || y + startY < MIN_HEIGHT + 2)
+                            continue;
+
+                        float noiseLava = noise3D.eval(
+                                             (float) ((x + startX) * lavaPocketSettings[i].frequency) +
+                                             lavaPocketSettings[i].offset,
+                                             (float) ((y + startY) * lavaPocketSettings[i].frequency) +
+                                             lavaPocketSettings[i].offset,
+                                             (float) ((z + startZ) * lavaPocketSettings[i].frequency) +
+                                             lavaPocketSettings[i].offset)
+                                         * lavaPocketSettings[i].amplitude;
+
+                        if (noiseLava > lavaPocketSettings[i].chance) {
+                            chunkData[currentIndex] = lavaPocketSettings[i].block;
                             blockSet = true;
                             break;
                         }
@@ -514,13 +542,16 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                                 chunkData[currentIndex] = Blocks::DIRT_BLOCK;
                             else
                                 chunkData[currentIndex] = Blocks::SAND;
-                        else if (y + startY > -50)
+                        else if (y + startY > MIN_HEIGHT)
                             chunkData[currentIndex] = Blocks::STONE_BLOCK;
                         else
-                            chunkData[currentIndex] = Blocks::AIR;
+                            y + startY == MIN_HEIGHT
+                                ? chunkData[currentIndex] = Blocks::BEDROCK
+                                : chunkData[currentIndex] = Blocks::AIR;
                     }
                 }
                 currentIndex++;
+
             }
         }
     }

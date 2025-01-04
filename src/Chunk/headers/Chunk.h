@@ -11,6 +11,13 @@
 #include "ChunkPos.h"
 #include "ChunkData.h"
 
+struct LiquidFace {
+    char x, y, z;
+    FACE_DIRECTION dir;
+    const Block* block;
+    char waterTopValue;
+};
+
 class Chunk
 {
 public:
