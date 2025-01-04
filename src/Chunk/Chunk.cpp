@@ -497,7 +497,7 @@ uint16_t Chunk::getBlockAtPos(int x, int y, int z) {
     return chunkData->getBlock(x, y, z);
 }
 
-void Chunk::updateBlock(int x, int y, int z, uint16_t newBlock) {
+void Chunk::updateBlock(int x, int y, int z, uint32_t newBlock) {
     chunkData->setBlock(x, y, z, newBlock);
 
     generateChunkMesh();

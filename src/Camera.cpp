@@ -26,7 +26,7 @@ glm::mat4 Camera::getViewMatrix() {
     return lookAt(Position, Position + Front, Up);
 }
 
-// processes input received from any keyboard-like input system. Accepts input parameter in the form of camera defined ENUM (to abstract it from windowing systems)
+// processes input received from any keyboard-like input system.
 void Camera::processKeyboard(Camera_Movement direction, float deltaTime) {
     float velocity = MovementSpeed * deltaTime;
     if (direction == FORWARD) { Position += Front * velocity; }
@@ -37,7 +37,7 @@ void Camera::processKeyboard(Camera_Movement direction, float deltaTime) {
     if (direction == DOWN) { Position -= glm::vec3(0, 1, 0) * velocity; }
 }
 
-// processes input received from a mouse input system. Expects the offset value in both the x and y direction.
+// processes input received from a mouse
 void Camera::processMouseMovement(float xoffset, float yoffset, GLboolean constrainPitch) {
     xoffset *= MouseSensitivity;
     yoffset *= MouseSensitivity;
@@ -55,13 +55,6 @@ void Camera::processMouseMovement(float xoffset, float yoffset, GLboolean constr
 
     // update Front, Right and Up Vectors using the updated Euler angles
     updateCameraVectors();
-}
-
-// processes input received from a mouse scroll-wheel event. Only requires input on the vertical wheel-axis
-void Camera::processMouseScroll(float yoffset) {
-    MovementSpeed += (float) yoffset;
-    if (MovementSpeed < 0)
-        MovementSpeed = 0;
 }
 
 // calculates the front vector from the Camera's (updated) Euler Angles

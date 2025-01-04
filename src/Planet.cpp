@@ -1,452 +1,411 @@
 #include "headers/Planet.h"
 #include <iostream>
+#include <unordered_set>
 #include <GL/glew.h>
 #include "headers/WorldGen.h"
 
 Planet *Planet::planet = nullptr;
 
 // Public
-Planet::Planet(Shader* solidShader, Shader* waterShader, Shader* billboardShader)
-	: solidShader(solidShader), waterShader(waterShader), billboardShader(billboardShader)
-{
-	chunkThread = std::thread(&Planet::chunkThreadUpdate, this);
+Planet::Planet(Shader *solidShader, Shader *waterShader, Shader *billboardShader)
+    : solidShader(solidShader), waterShader(waterShader), billboardShader(billboardShader) {
+    chunkThread = std::thread(&Planet::chunkThreadUpdate, this);
 }
 
-Planet::~Planet()
-{
-	shouldEnd = true;
-	chunkThread.join();
+Planet::~Planet() {
+    shouldEnd = true;
+    chunkThread.join();
 }
 
-void Planet::update(glm::vec3 cameraPos)
-{
-	camChunkX = cameraPos.x < 0 ? floor(cameraPos.x / CHUNK_SIZE) : cameraPos.x / CHUNK_SIZE;
-	camChunkY = cameraPos.y < 0 ? floor(cameraPos.y / CHUNK_SIZE) : cameraPos.y / CHUNK_SIZE;
-	camChunkZ = cameraPos.z < 0 ? floor(cameraPos.z / CHUNK_SIZE) : cameraPos.z / CHUNK_SIZE;
+void Planet::update(const glm::vec3& cameraPos) {
+    // Check if the seed has changed
+    if (SEED != last_seed) {
+        last_seed = SEED;
+        chunks.clear();
+        chunkData.clear();
+        return;
+    }
 
-	glDisable(GL_BLEND);
+    // Calculate camera chunk position
+    camChunkX = static_cast<int>(floor(cameraPos.x / CHUNK_SIZE));
+    camChunkY = static_cast<int>(floor(cameraPos.y / CHUNK_SIZE));
+    camChunkZ = static_cast<int>(floor(cameraPos.z / CHUNK_SIZE));
 
-	chunksLoading = 0;
-	numChunks = 0;
-	numChunksRendered = 0;
-	chunkMutex.lock();
-	for (auto it = chunks.begin(); it != chunks.end(); )
-	{
-		numChunks++;
+    glDisable(GL_BLEND);
 
-		if (!(*it->second).ready)
-			chunksLoading++;
+    // Reset counters
+    chunksLoading = 0;
+    numChunks = 0;
+    numChunksRendered = 0;
 
-		int chunkX = (*it->second).chunkPos.x;
-		int chunkY = (*it->second).chunkPos.y;
-		int chunkZ = (*it->second).chunkPos.z;
-		if ((*it->second).ready && (abs(chunkX - camChunkX) > renderDistance ||
-			abs(chunkY - camChunkY) > renderDistance ||
-			abs(chunkZ - camChunkZ) > renderDistance))
-		{
-			// Out of range
-			// Add chunk data to delete queue
-			chunkDataDeleteQueue.emplace( chunkX,     chunkY, chunkZ );
-			chunkDataDeleteQueue.emplace( chunkX + 1, chunkY, chunkZ );
-			chunkDataDeleteQueue.emplace( chunkX - 1, chunkY, chunkZ );
-			chunkDataDeleteQueue.emplace( chunkX, chunkY + 1, chunkZ );
-			chunkDataDeleteQueue.emplace( chunkX, chunkY - 1, chunkZ );
-			chunkDataDeleteQueue.emplace( chunkX, chunkY, chunkZ + 1 );
-			chunkDataDeleteQueue.emplace( chunkX, chunkY, chunkZ - 1 );
+    // Lock the chunk mutex
+    std::lock_guard<std::mutex> lock(chunkMutex);
 
-			// Delete chunk
-			delete it->second;
-			it = chunks.erase(it);
-		}
-		else
-		{
-			numChunksRendered++;
-			(*it->second).render(solidShader, billboardShader);
-			++it;
-		}
-	}
+    for (auto it = chunks.begin(); it != chunks.end();) {
+        Chunk *chunk = it->second;
+        const int chunkX = chunk->chunkPos.x;
+        const int chunkY = chunk->chunkPos.y;
+        const int chunkZ = chunk->chunkPos.z;
 
-	glEnable(GL_BLEND);
-	waterShader->use();
-	for (auto it = chunks.begin(); it != chunks.end(); )
-	{
-		int chunkX = (*it->second).chunkPos.x;
-		int chunkY = (*it->second).chunkPos.y;
-		int chunkZ = (*it->second).chunkPos.z;
+        ++numChunks;
 
-		(*it->second).renderWater(waterShader);
-		++it;
-	}
+        if (!chunk->ready) {
+            ++chunksLoading;
+        }
 
-	chunkMutex.unlock();
+        // Check if the chunk is out of the render distance
+        if (chunk->ready &&
+            (abs(chunkX - camChunkX) > renderDistance ||
+             abs(chunkY - camChunkY) > renderDistance ||
+             abs(chunkZ - camChunkZ) > renderDistance)) {
+            // Queue neighboring chunk data for deletion
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        if (abs(dx) + abs(dy) + abs(dz) == 1) {
+                            chunkDataDeleteQueue.emplace(chunkX + dx, chunkY + dy, chunkZ + dz);
+                        }
+                    }
+                }
+            }
+
+            // Delete the chunk and erase it from the map
+            delete chunk;
+            it = chunks.erase(it);
+        } else {
+            // Render the chunk
+            ++numChunksRendered;
+            chunk->render(solidShader, billboardShader);
+            ++it;
+        }
+    }
+
+    glEnable(GL_BLEND);
+
+    // Render water for all chunks
+    waterShader->use();
+    for (auto &[_, chunk]: chunks) {
+        chunk->renderWater(waterShader);
+    }
 }
 
-void Planet::chunkThreadUpdate()
-{
-	while (!shouldEnd)
-	{
-		for (auto it = chunkData.begin(); it != chunkData.end(); )
-		{
-			ChunkPos pos = it->first;
+void Planet::chunkThreadUpdate() {
+    while (!shouldEnd) {
+        for (auto it = chunkData.begin(); it != chunkData.end();) {
+            ChunkPos pos = it->first;
 
-			if (chunks.find(pos) == chunks.end() &&
-				chunks.find({ pos.x + 1, pos.y, pos.z }) == chunks.end() &&
-				chunks.find({ pos.x - 1, pos.y, pos.z }) == chunks.end() &&
-				chunks.find({ pos.x, pos.y + 1, pos.z }) == chunks.end() &&
-				chunks.find({ pos.x, pos.y - 1, pos.z }) == chunks.end() &&
-				chunks.find({ pos.x, pos.y, pos.z + 1 }) == chunks.end() &&
-				chunks.find({ pos.x, pos.y, pos.z - 1 }) == chunks.end())
-			{
-				delete chunkData.at(pos);
-				it = chunkData.erase(it);
-			}
-			else {
-				++it;
-			}
-		}
+            if (chunks.find(pos) == chunks.end() &&
+                chunks.find({pos.x + 1, pos.y, pos.z}) == chunks.end() &&
+                chunks.find({pos.x - 1, pos.y, pos.z}) == chunks.end() &&
+                chunks.find({pos.x, pos.y + 1, pos.z}) == chunks.end() &&
+                chunks.find({pos.x, pos.y - 1, pos.z}) == chunks.end() &&
+                chunks.find({pos.x, pos.y, pos.z + 1}) == chunks.end() &&
+                chunks.find({pos.x, pos.y, pos.z - 1}) == chunks.end()) {
+                delete chunkData.at(pos);
+                it = chunkData.erase(it);
+            } else {
+                ++it;
+            }
+        }
 
-		// Check if camera moved to new chunk
-		if (camChunkX != lastCamX || camChunkY != lastCamY || camChunkZ != lastCamZ)
-		{
-			// Player moved chunks, start new chunk queue
-			lastCamX = camChunkX;
-			lastCamY = camChunkY;
-			lastCamZ = camChunkZ;
+        // Check if camera moved to new chunk
+        if (camChunkX != lastCamX || camChunkY != lastCamY || camChunkZ != lastCamZ) {
+            // Player moved chunks, start new chunk queue
+            lastCamX = camChunkX;
+            lastCamY = camChunkY;
+            lastCamZ = camChunkZ;
 
-			// Current chunk
-			chunkMutex.lock();
-			chunkQueue = {};
-			if (chunks.find({ camChunkX, camChunkY, camChunkZ }) == chunks.end())
-				chunkQueue.emplace( camChunkX, camChunkY, camChunkZ );
+            // Current chunk
+            chunkMutex.lock();
+            chunkQueue = {};
+            if (chunks.find({camChunkX, camChunkY, camChunkZ}) == chunks.end())
+                chunkQueue.emplace(camChunkX, camChunkY, camChunkZ);
 
-			for (int r = 0; r < renderDistance; r++)
-			{
-				// Add middle chunks
-				for (int y = 0; y <= renderHeight; y++)
-				{
-					chunkQueue.emplace( camChunkX,     camChunkY + y, camChunkZ + r );
-					chunkQueue.emplace( camChunkX + r, camChunkY + y, camChunkZ );
-					chunkQueue.emplace( camChunkX,     camChunkY + y, camChunkZ - r );
-					chunkQueue.emplace( camChunkX - r, camChunkY + y, camChunkZ );
+            for (int r = 0; r < renderDistance; r++) {
+                // Add middle chunks
+                for (int y = 0; y <= renderHeight; y++) {
+                    chunkQueue.emplace(camChunkX, camChunkY + y, camChunkZ + r);
+                    chunkQueue.emplace(camChunkX + r, camChunkY + y, camChunkZ);
+                    chunkQueue.emplace(camChunkX, camChunkY + y, camChunkZ - r);
+                    chunkQueue.emplace(camChunkX - r, camChunkY + y, camChunkZ);
 
-					if (y > 0)
-					{
-						chunkQueue.emplace( camChunkX,     camChunkY - y, camChunkZ + r );
-						chunkQueue.emplace( camChunkX + r, camChunkY - y, camChunkZ );
-						chunkQueue.emplace( camChunkX,     camChunkY - y, camChunkZ - r );
-						chunkQueue.emplace( camChunkX - r, camChunkY - y, camChunkZ);
-					}
-				}
+                    if (y > 0) {
+                        chunkQueue.emplace(camChunkX, camChunkY - y, camChunkZ + r);
+                        chunkQueue.emplace(camChunkX + r, camChunkY - y, camChunkZ);
+                        chunkQueue.emplace(camChunkX, camChunkY - y, camChunkZ - r);
+                        chunkQueue.emplace(camChunkX - r, camChunkY - y, camChunkZ);
+                    }
+                }
 
-				// Add edges
-				for (int e = 1; e < r; e++)
-				{
-					for (int y = 0; y <= renderHeight; y++)
-					{
-						chunkQueue.emplace( camChunkX + e, camChunkY + y, camChunkZ + r );
-						chunkQueue.emplace( camChunkX - e, camChunkY + y, camChunkZ + r );
-						chunkQueue.emplace( camChunkX + r, camChunkY + y, camChunkZ + e );
-						chunkQueue.emplace( camChunkX + r, camChunkY + y, camChunkZ - e );
-						chunkQueue.emplace( camChunkX + e, camChunkY + y, camChunkZ - r );
-						chunkQueue.emplace( camChunkX - e, camChunkY + y, camChunkZ - r );
-						chunkQueue.emplace( camChunkX - r, camChunkY + y, camChunkZ + e );
-						chunkQueue.emplace( camChunkX - r, camChunkY + y, camChunkZ - e );
+                // Add edges
+                for (int e = 1; e < r; e++) {
+                    for (int y = 0; y <= renderHeight; y++) {
+                        chunkQueue.emplace(camChunkX + e, camChunkY + y, camChunkZ + r);
+                        chunkQueue.emplace(camChunkX - e, camChunkY + y, camChunkZ + r);
+                        chunkQueue.emplace(camChunkX + r, camChunkY + y, camChunkZ + e);
+                        chunkQueue.emplace(camChunkX + r, camChunkY + y, camChunkZ - e);
+                        chunkQueue.emplace(camChunkX + e, camChunkY + y, camChunkZ - r);
+                        chunkQueue.emplace(camChunkX - e, camChunkY + y, camChunkZ - r);
+                        chunkQueue.emplace(camChunkX - r, camChunkY + y, camChunkZ + e);
+                        chunkQueue.emplace(camChunkX - r, camChunkY + y, camChunkZ - e);
 
-						if (y > 0)
-						{
-							chunkQueue.emplace( camChunkX + e, camChunkY - y, camChunkZ + r );
-							chunkQueue.emplace( camChunkX - e, camChunkY - y, camChunkZ + r );
-							chunkQueue.emplace( camChunkX + r, camChunkY - y, camChunkZ + e );
-							chunkQueue.emplace( camChunkX + r, camChunkY - y, camChunkZ - e );
-							chunkQueue.emplace( camChunkX + e, camChunkY - y, camChunkZ - r );
-							chunkQueue.emplace( camChunkX - e, camChunkY - y, camChunkZ - r );
-							chunkQueue.emplace( camChunkX - r, camChunkY - y, camChunkZ + e );
-							chunkQueue.emplace( camChunkX - r, camChunkY - y, camChunkZ - e );
-						}
-					}
-				}
+                        if (y > 0) {
+                            chunkQueue.emplace(camChunkX + e, camChunkY - y, camChunkZ + r);
+                            chunkQueue.emplace(camChunkX - e, camChunkY - y, camChunkZ + r);
+                            chunkQueue.emplace(camChunkX + r, camChunkY - y, camChunkZ + e);
+                            chunkQueue.emplace(camChunkX + r, camChunkY - y, camChunkZ - e);
+                            chunkQueue.emplace(camChunkX + e, camChunkY - y, camChunkZ - r);
+                            chunkQueue.emplace(camChunkX - e, camChunkY - y, camChunkZ - r);
+                            chunkQueue.emplace(camChunkX - r, camChunkY - y, camChunkZ + e);
+                            chunkQueue.emplace(camChunkX - r, camChunkY - y, camChunkZ - e);
+                        }
+                    }
+                }
 
-				// Add corners
-				for (int y = 0; y <= renderHeight; y++)
-				{
-					chunkQueue.emplace( camChunkX + r, camChunkY + y, camChunkZ + r );
-					chunkQueue.emplace( camChunkX + r, camChunkY + y, camChunkZ - r );
-					chunkQueue.emplace( camChunkX - r, camChunkY + y, camChunkZ + r );
-					chunkQueue.emplace( camChunkX - r, camChunkY + y, camChunkZ - r );
+                // Add corners
+                for (int y = 0; y <= renderHeight; y++) {
+                    chunkQueue.emplace(camChunkX + r, camChunkY + y, camChunkZ + r);
+                    chunkQueue.emplace(camChunkX + r, camChunkY + y, camChunkZ - r);
+                    chunkQueue.emplace(camChunkX - r, camChunkY + y, camChunkZ + r);
+                    chunkQueue.emplace(camChunkX - r, camChunkY + y, camChunkZ - r);
 
-					if (y > 0)
-					{
-						chunkQueue.emplace( camChunkX + r, camChunkY - y, camChunkZ + r );
-						chunkQueue.emplace( camChunkX + r, camChunkY - y, camChunkZ - r );
-						chunkQueue.emplace( camChunkX - r, camChunkY - y, camChunkZ + r );
-						chunkQueue.emplace( camChunkX - r, camChunkY - y, camChunkZ - r );
-					}
-				}
-			}
+                    if (y > 0) {
+                        chunkQueue.emplace(camChunkX + r, camChunkY - y, camChunkZ + r);
+                        chunkQueue.emplace(camChunkX + r, camChunkY - y, camChunkZ - r);
+                        chunkQueue.emplace(camChunkX - r, camChunkY - y, camChunkZ + r);
+                        chunkQueue.emplace(camChunkX - r, camChunkY - y, camChunkZ - r);
+                    }
+                }
+            }
 
-			chunkMutex.unlock();
-		}
-		else
-		{
-			chunkMutex.lock();
-			if (!chunkDataQueue.empty())
-			{
-				ChunkPos chunkPos = chunkDataQueue.front();
+            chunkMutex.unlock();
+        } else {
+            chunkMutex.lock();
+            if (!chunkDataQueue.empty()) {
+                ChunkPos chunkPos = chunkDataQueue.front();
 
-				if (chunkData.find(chunkPos) != chunkData.end())
-				{
-					chunkDataQueue.pop();
-					chunkMutex.unlock();
-					continue;
-				}
+                if (chunkData.find(chunkPos) != chunkData.end()) {
+                    chunkDataQueue.pop();
+                    chunkMutex.unlock();
+                    continue;
+                }
 
-				chunkMutex.unlock();
+                chunkMutex.unlock();
 
-				uint16_t* d = new uint16_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
-				ChunkData* data = new ChunkData(d);
+                auto *d = new uint32_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
+                auto *data = new ChunkData(d);
 
-				WorldGen::generateChunkData(chunkPos, d);
+                WorldGen::generateChunkData(chunkPos, d, SEED);
 
-				chunkMutex.lock();
-				chunkData[chunkPos] = data;
-				chunkDataQueue.pop();
-				chunkMutex.unlock();
-			}
-			else
-			{
-				if (!chunkQueue.empty())
-				{
-					// Check if chunk exists
-					ChunkPos chunkPos = chunkQueue.front();
-					if (chunks.find(chunkPos) != chunks.end())
-					{
-						chunkQueue.pop();
-						chunkMutex.unlock();
-						continue;
-					}
+                chunkMutex.lock();
+                chunkData[chunkPos] = data;
+                chunkDataQueue.pop();
+                chunkMutex.unlock();
+            } else {
+                if (!chunkQueue.empty()) {
+                    // Check if chunk exists
+                    ChunkPos chunkPos = chunkQueue.front();
+                    if (chunks.find(chunkPos) != chunks.end()) {
+                        chunkQueue.pop();
+                        chunkMutex.unlock();
+                        continue;
+                    }
 
-					chunkMutex.unlock();
+                    chunkMutex.unlock();
 
-					// Create chunk object
-					Chunk* chunk = new Chunk(chunkPos, solidShader, waterShader);
+                    // Create chunk object
+                    auto *chunk = new Chunk(chunkPos, solidShader, waterShader);
 
-					// Set chunk data
-					{
-						chunkMutex.lock();
-						if (chunkData.find(chunkPos) == chunkData.end())
-						{
-							chunkMutex.unlock();
-							uint16_t* d = new uint16_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
+                    // Set chunk data
+                    {
+                        chunkMutex.lock();
+                        if (chunkData.find(chunkPos) == chunkData.end()) {
+                            chunkMutex.unlock();
+                            auto *d = new uint32_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
 
-							WorldGen::generateChunkData(chunkPos, d);
+                            WorldGen::generateChunkData(chunkPos, d, SEED);
 
-							ChunkData* data = new ChunkData(d);
+                            auto *data = new ChunkData(d);
 
-							chunk->chunkData = data;
+                            chunk->chunkData = data;
 
-							chunkMutex.lock();
-							chunkData[chunkPos] = data;
-							chunkMutex.unlock();
-						}
-						else
-						{
-							chunk->chunkData = chunkData.at(chunkPos);
-							chunkMutex.unlock();
-						}
-					}
+                            chunkMutex.lock();
+                            chunkData[chunkPos] = data;
+                            chunkMutex.unlock();
+                        } else {
+                            chunk->chunkData = chunkData.at(chunkPos);
+                            chunkMutex.unlock();
+                        }
+                    }
 
-					// Set top data
-					{
-						ChunkPos topPos(chunkPos.x, chunkPos.y + 1, chunkPos.z);
-						chunkMutex.lock();
-						if (chunkData.find(topPos) == chunkData.end())
-						{
-							chunkMutex.unlock();
-							uint16_t* d = new uint16_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
+                    // Set top data
+                    {
+                        ChunkPos topPos(chunkPos.x, chunkPos.y + 1, chunkPos.z);
+                        chunkMutex.lock();
+                        if (chunkData.find(topPos) == chunkData.end()) {
+                            chunkMutex.unlock();
+                            auto *d = new uint32_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
 
-							WorldGen::generateChunkData(topPos, d);
+                            WorldGen::generateChunkData(topPos, d, SEED);
 
-							ChunkData* data = new ChunkData(d);
+                            auto *data = new ChunkData(d);
 
-							chunk->upData = data;
+                            chunk->upData = data;
 
-							chunkMutex.lock();
-							chunkData[topPos] = data;
-							chunkMutex.unlock();
-						}
-						else
-						{
-							chunk->upData = chunkData.at(topPos);
-							chunkMutex.unlock();
-						}
-					}
+                            chunkMutex.lock();
+                            chunkData[topPos] = data;
+                            chunkMutex.unlock();
+                        } else {
+                            chunk->upData = chunkData.at(topPos);
+                            chunkMutex.unlock();
+                        }
+                    }
 
-					// Set bottom data
-					{
-						ChunkPos bottomPos(chunkPos.x, chunkPos.y - 1, chunkPos.z);
-						chunkMutex.lock();
-						if (chunkData.find(bottomPos) == chunkData.end())
-						{
-							chunkMutex.unlock();
-							uint16_t* d = new uint16_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
+                    // Set bottom data
+                    {
+                        ChunkPos bottomPos(chunkPos.x, chunkPos.y - 1, chunkPos.z);
+                        chunkMutex.lock();
+                        if (chunkData.find(bottomPos) == chunkData.end()) {
+                            chunkMutex.unlock();
+                            auto *d = new uint32_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
 
-							WorldGen::generateChunkData(bottomPos, d);
+                            WorldGen::generateChunkData(bottomPos, d, SEED);
 
-							ChunkData* data = new ChunkData(d);
+                            auto *data = new ChunkData(d);
 
-							chunk->downData = data;
+                            chunk->downData = data;
 
-							chunkMutex.lock();
-							chunkData[bottomPos] = data;
-							chunkMutex.unlock();
-						}
-						else
-						{
-							chunk->downData = chunkData.at(bottomPos);
-							chunkMutex.unlock();
-						}
-					}
+                            chunkMutex.lock();
+                            chunkData[bottomPos] = data;
+                            chunkMutex.unlock();
+                        } else {
+                            chunk->downData = chunkData.at(bottomPos);
+                            chunkMutex.unlock();
+                        }
+                    }
 
-					// Set north data
-					{
-						ChunkPos northPos(chunkPos.x, chunkPos.y, chunkPos.z - 1);
-						chunkMutex.lock();
-						if (chunkData.find(northPos) == chunkData.end())
-						{
-							chunkMutex.unlock();
-							uint16_t* d = new uint16_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
+                    // Set north data
+                    {
+                        ChunkPos northPos(chunkPos.x, chunkPos.y, chunkPos.z - 1);
+                        chunkMutex.lock();
+                        if (chunkData.find(northPos) == chunkData.end()) {
+                            chunkMutex.unlock();
+                            auto *d = new uint32_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
 
-							WorldGen::generateChunkData(northPos, d);
+                            WorldGen::generateChunkData(northPos, d, SEED);
 
-							ChunkData* data = new ChunkData(d);
+                            auto *data = new ChunkData(d);
 
-							chunk->northData = data;
+                            chunk->northData = data;
 
-							chunkMutex.lock();
-							chunkData[northPos] = data;
-							chunkMutex.unlock();
-						}
-						else
-						{
-							chunk->northData = chunkData.at(northPos);
-							chunkMutex.unlock();
-						}
-					}
+                            chunkMutex.lock();
+                            chunkData[northPos] = data;
+                            chunkMutex.unlock();
+                        } else {
+                            chunk->northData = chunkData.at(northPos);
+                            chunkMutex.unlock();
+                        }
+                    }
 
-					// Set south data
-					{
-						ChunkPos southPos(chunkPos.x, chunkPos.y, chunkPos.z + 1);
-						chunkMutex.lock();
-						if (chunkData.find(southPos) == chunkData.end())
-						{
-							chunkMutex.unlock();
-							uint16_t* d = new uint16_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
+                    // Set south data
+                    {
+                        ChunkPos southPos(chunkPos.x, chunkPos.y, chunkPos.z + 1);
+                        chunkMutex.lock();
+                        if (chunkData.find(southPos) == chunkData.end()) {
+                            chunkMutex.unlock();
+                            auto *d = new uint32_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
 
-							WorldGen::generateChunkData(southPos, d);
+                            WorldGen::generateChunkData(southPos, d, SEED);
 
-							ChunkData* data = new ChunkData(d);
+                            auto *data = new ChunkData(d);
 
-							chunk->southData = data;
+                            chunk->southData = data;
 
-							chunkMutex.lock();
-							chunkData[southPos] = data;
-							chunkMutex.unlock();
-						}
-						else
-						{
-							chunk->southData = chunkData.at(southPos);
-							chunkMutex.unlock();
-						}
-					}
+                            chunkMutex.lock();
+                            chunkData[southPos] = data;
+                            chunkMutex.unlock();
+                        } else {
+                            chunk->southData = chunkData.at(southPos);
+                            chunkMutex.unlock();
+                        }
+                    }
 
-					// Set east data
-					{
-						ChunkPos eastPos(chunkPos.x + 1, chunkPos.y, chunkPos.z);
-						chunkMutex.lock();
-						if (chunkData.find(eastPos) == chunkData.end())
-						{
-							chunkMutex.unlock();
-							uint16_t* d = new uint16_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
+                    // Set east data
+                    {
+                        ChunkPos eastPos(chunkPos.x + 1, chunkPos.y, chunkPos.z);
+                        chunkMutex.lock();
+                        if (chunkData.find(eastPos) == chunkData.end()) {
+                            chunkMutex.unlock();
+                            auto *d = new uint32_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
 
-							WorldGen::generateChunkData(eastPos, d);
+                            WorldGen::generateChunkData(eastPos, d, SEED);
 
-							ChunkData* data = new ChunkData(d);
+                            auto *data = new ChunkData(d);
 
-							chunk->eastData = data;
+                            chunk->eastData = data;
 
-							chunkMutex.lock();
-							chunkData[eastPos] = data;
-							chunkMutex.unlock();
-						}
-						else
-						{
-							chunk->eastData = chunkData.at(eastPos);
-							chunkMutex.unlock();
-						}
-					}
+                            chunkMutex.lock();
+                            chunkData[eastPos] = data;
+                            chunkMutex.unlock();
+                        } else {
+                            chunk->eastData = chunkData.at(eastPos);
+                            chunkMutex.unlock();
+                        }
+                    }
 
-					// Set west data
-					{
-						ChunkPos westPos(chunkPos.x - 1, chunkPos.y, chunkPos.z);
-						chunkMutex.lock();
-						if (chunkData.find(westPos) == chunkData.end())
-						{
-							chunkMutex.unlock();
-							uint16_t* d = new uint16_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
+                    // Set west data
+                    {
+                        ChunkPos westPos(chunkPos.x - 1, chunkPos.y, chunkPos.z);
+                        chunkMutex.lock();
+                        if (chunkData.find(westPos) == chunkData.end()) {
+                            chunkMutex.unlock();
+                            auto *d = new uint32_t[CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
 
-							WorldGen::generateChunkData(westPos, d);
+                            WorldGen::generateChunkData(westPos, d, SEED);
 
-							ChunkData* data = new ChunkData(d);
+                            auto *data = new ChunkData(d);
 
-							chunk->westData = data;
+                            chunk->westData = data;
 
-							chunkMutex.lock();
-							chunkData[westPos] = data;
-							chunkMutex.unlock();
-						}
-						else
-						{
-							chunk->westData = chunkData.at(westPos);
-							chunkMutex.unlock();
-						}
-					}
+                            chunkMutex.lock();
+                            chunkData[westPos] = data;
+                            chunkMutex.unlock();
+                        } else {
+                            chunk->westData = chunkData.at(westPos);
+                            chunkMutex.unlock();
+                        }
+                    }
 
-					// Generate chunk mesh
-					chunk->generateChunkMesh();
+                    // Generate chunk mesh
+                    chunk->generateChunkMesh();
 
-					// Finish
-					chunkMutex.lock();
-					chunks[chunkPos] = chunk;
-					chunkQueue.pop();
-					chunkMutex.unlock();
-				}
-				else
-				{
-					chunkMutex.unlock();
+                    // Finish
+                    chunkMutex.lock();
+                    chunks[chunkPos] = chunk;
+                    chunkQueue.pop();
+                    chunkMutex.unlock();
+                } else {
+                    chunkMutex.unlock();
 
-					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-				}
-			}
-		}
-	}
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
+        }
+    }
 }
 
-Chunk* Planet::getChunk(ChunkPos chunkPos)
-{
-	chunkMutex.lock();
-	if (chunks.find(chunkPos) == chunks.end())
-	{
-		chunkMutex.unlock();
-		return nullptr;
-	}
-	else
-	{
-		chunkMutex.unlock();
-		return chunks.at(chunkPos);
-	}
+
+Chunk *Planet::getChunk(ChunkPos chunkPos) {
+    chunkMutex.lock();
+    if (chunks.find(chunkPos) == chunks.end()) {
+        chunkMutex.unlock();
+        return nullptr;
+    } else {
+        chunkMutex.unlock();
+        return chunks.at(chunkPos);
+    }
 }
 
-void Planet::clearChunkQueue()
-{
-	lastCamX++;
+void Planet::clearChunkQueue() {
+    lastCamX++;
 }

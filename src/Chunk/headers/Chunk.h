@@ -24,7 +24,7 @@ public:
     void render(Shader* mainShader, Shader* billboardShader);
     void renderWater(Shader* shader);
     uint16_t getBlockAtPos(int x, int y, int z);
-    void updateBlock(int x, int y, int z, uint16_t newBlock);
+    void updateBlock(int x, int y, int z, uint32_t newBlock);
     void updateChunk();
 
 public:

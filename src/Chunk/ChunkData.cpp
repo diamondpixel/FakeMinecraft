@@ -1,7 +1,7 @@
 #include "headers/ChunkData.h"
 #include "../headers/Planet.h"
 
-ChunkData::ChunkData(uint16_t* data)
+ChunkData::ChunkData(uint32_t* data)
     : data(data)
 {
 
@@ -32,7 +32,7 @@ uint16_t ChunkData::getBlock(int x, int y, int z)
     return data[getIndex(x, y, z)];
 }
 
-void ChunkData::setBlock(int x, int y, int z, uint16_t block)
+void ChunkData::setBlock(int x, int y, int z, uint32_t block)
 {
     data[getIndex(x, y, z)] = block;
 }

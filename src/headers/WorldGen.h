@@ -7,5 +7,5 @@
 
 namespace WorldGen
 {
-	void generateChunkData(ChunkPos chunkPos, uint16_t* chunkData);
+	void generateChunkData(ChunkPos chunkPos, uint32_t* chunkData, long seed);
 }

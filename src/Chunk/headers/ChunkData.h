@@ -6,10 +6,10 @@
 
 struct ChunkData
 {
-    uint16_t* data;
+    uint32_t* data;
 
 
-    ChunkData(uint16_t* data);
+    ChunkData(uint32_t* data);
     ~ChunkData();
 
     inline int getIndex(int x, int y, int z) const;
@@ -17,5 +17,5 @@ struct ChunkData
 
     uint16_t getBlock(ChunkPos blockPos);
     uint16_t getBlock(int x, int y, int z);
-    void setBlock(int x, int y, int z, uint16_t block);
+    void setBlock(int x, int y, int z, uint32_t block);
 };

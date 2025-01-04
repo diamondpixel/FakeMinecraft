@@ -14,6 +14,7 @@
 #include "./../Chunk/headers/ChunkPosHash.h"
 
 constexpr unsigned int CHUNK_SIZE = 32;
+inline long SEED = 0;
 
 class Planet
 {
@@ -21,15 +22,14 @@ class Planet
 public:
     Planet(Shader* solidShader, Shader* waterShader, Shader* billboardShader);
     ~Planet();
-
-    ChunkData* getChunkData(ChunkPos chunkPos);
-    void update(glm::vec3 cameraPos);
-
+    void update(const glm::vec3& cameraPos);
     Chunk* getChunk(ChunkPos chunkPos);
     void clearChunkQueue();
 
 private:
     void chunkThreadUpdate();
+
+    void addSurroundingChunks(int r, int y);
 
     // Variables
 public:
@@ -37,6 +37,7 @@ public:
     unsigned int numChunks = 0, numChunksRendered = 0;
     int renderDistance = 5;
     int renderHeight = 3;
+
 
 private:
     std::unordered_map<ChunkPos, Chunk*, ChunkPosHash> chunks;
@@ -47,6 +48,7 @@ private:
     unsigned int chunksLoading = 0;
     int lastCamX = -100, lastCamY = -100, lastCamZ = -100;
     int camChunkX = -100, camChunkY = -100, camChunkZ = -100;
+    long last_seed = 0;
 
     Shader* solidShader;
     Shader* waterShader;

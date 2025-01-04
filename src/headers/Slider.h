@@ -21,7 +21,7 @@ public:
     void draw() const;
 
     // Update the slider value if dragging
-    void update(float mouseX);
+    void update(float mouseX, int &value);
 
     // Check if mouse is over the slider handle
     bool isMouseOverHandle(float mouseX, float mouseY) const;
@@ -31,4 +31,6 @@ public:
 
     // Stop dragging
     void stopDragging();
+
+    void setDimensions(float x, float y);
 };
