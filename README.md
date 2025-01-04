@@ -12,12 +12,11 @@ The tools bellow were used to create my game:
 
 - [C++] -  Visual Studio Tools? 🤔
 - [Math] - Read a book or something? 🤔
-
+- [Tears] 😭
 ## Installation (Windows x64 Exclusively)
 
 - The game requires [Cmake](https://cmake.org/download/) in order to compile.
 - You need the custom image of [SGG](https://github.com/diamondpixel/sgg) library.
--  - Copy everything from [./3rdparty/bin](https://github.com/diamondpixel/sgg/tree/main/3rdparty/bin) to ./dependencies/bin/.
 - Also you need the MVSC compiler, trying to compile with MinGW will result in errors.
 
 ```bat
