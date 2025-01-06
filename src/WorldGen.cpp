@@ -609,17 +609,6 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                     int featureY = noiseY;
                     int featureZ = z + startZ;
 
-                    // Ensure the block below is NOT water
-                    int belowLocalIndex = (featureX - startX) * chunkSize * chunkSize +
-                                          (featureZ - startZ) * chunkSize +
-                                          (featureY - 1 - startY);
-
-                    if (belowLocalIndex < 0 || belowLocalIndex >= chunkSize * chunkSize * chunkSize)
-                        continue;
-
-                    if (chunkData[belowLocalIndex] == 2)
-                        continue; // Skip if the block below is water
-
                     for (int fX = 0; fX < surfaceFeatures[i].sizeX; fX++) {
                         for (int fY = 0; fY < surfaceFeatures[i].sizeY; fY++) {
                             for (int fZ = 0; fZ < surfaceFeatures[i].sizeZ; fZ++) {
@@ -627,13 +616,16 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                                 int localY = featureY + fY + surfaceFeatures[i].offsetY - startY;
                                 int localZ = featureZ + fZ + surfaceFeatures[i].offsetZ - startZ;
 
-                                if (localX >= chunkSize || localX < 0 || localY >= chunkSize || localY < 0 || localZ >=
-                                    chunkSize || localZ < 0)
+                                if (localX >= chunkSize || localX < 0 ||
+                                    localY >= chunkSize || localY < 0 ||
+                                    localZ >= chunkSize || localZ < 0)
                                     continue;
 
                                 int featureIndex = fY * surfaceFeatures[i].sizeX * surfaceFeatures[i].sizeZ +
                                                    fX * surfaceFeatures[i].sizeZ + fZ;
-                                int localIndex = localX * chunkSize * chunkSize + localZ * chunkSize + localY;
+                                int localIndex = localX * chunkSize * chunkSize +
+                                                 localZ * chunkSize +
+                                                 localY;
 
                                 if (surfaceFeatures[i].replaceBlock[featureIndex] || chunkData[localIndex] == 0) {
                                     chunkData[localIndex] = surfaceFeatures[i].blocks[featureIndex];
