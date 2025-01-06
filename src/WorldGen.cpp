@@ -28,7 +28,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
     static int caveSettingsLength = std::size(caveSettings);
 
     static NoiseSettings oreSettings[]{
-        { 0.075f, 1.0f, 8.54f, .75f, 16, 0 }
+        {0.075f, 1.0f, 8.54f, .75f, 16, 0}
     };
     static int oreSettingsLength = std::size(oreSettings);
 
@@ -227,7 +227,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
         // Tree
         {
             {
-                17.23f, 1.0f, 8.54f, .8f, 1, 0
+                17.23f, 1.0f, 8.54f, .75f, 1, 0
             },
             {
                 0, 0, 0, 0, 0,
@@ -325,7 +325,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
         // Tall Grass
         {
             {
-                1.23f, 1.0f, 4.34f, .6f, 1, 0
+                1.23f, 1.0f, 4.34f, .4f, 1, 0
             },
             {
                 2, 7, 8
@@ -343,7 +343,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
         // Grass
         {
             {
-                2.65f, 1.0f, 8.54f, .5f, 1, 0
+                2.65f, 1.0f, 8.54f, .3f, 1, 0
             },
             {
                 2, 6
@@ -361,7 +361,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
         // Poppy
         {
             {
-                5.32f, 1.0f, 3.67f, .8f, 1, 0
+                5.32f, 1.0f, 3.67f, .2f, 1, 0
             },
             {
                 2, 9
@@ -379,7 +379,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
         // White Tulip
         {
             {
-                5.57f, 1.0f, 7.654f, .8f, 1, 0
+                5.57f, 1.0f, 7.654f, .2f, 1, 0
             },
             {
                 2, 10
@@ -397,7 +397,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
         // Pink Tulip
         {
             {
-                4.94f, 1.0f, 2.23f, .8f, 1, 0
+                4.94f, 1.0f, 2.23f, .2f, 1, 0
             },
             {
                 2, 11
@@ -415,7 +415,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
         // Orange Tulip
         {
             {
-                6.32f, 1.0f, 8.2f, .85f, 1, 0
+                6.32f, 1.0f, 8.2f, .2f, 1, 0
             },
             {
                 2, 12
@@ -516,13 +516,13 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                             continue;
 
                         float noiseLava = noise3D.eval(
-                                             (float) ((x + startX) * lavaPocketSettings[i].frequency) +
-                                             lavaPocketSettings[i].offset,
-                                             (float) ((y + startY) * lavaPocketSettings[i].frequency) +
-                                             lavaPocketSettings[i].offset,
-                                             (float) ((z + startZ) * lavaPocketSettings[i].frequency) +
-                                             lavaPocketSettings[i].offset)
-                                         * lavaPocketSettings[i].amplitude;
+                                              (float) ((x + startX) * lavaPocketSettings[i].frequency) +
+                                              lavaPocketSettings[i].offset,
+                                              (float) ((y + startY) * lavaPocketSettings[i].frequency) +
+                                              lavaPocketSettings[i].offset,
+                                              (float) ((z + startZ) * lavaPocketSettings[i].frequency) +
+                                              lavaPocketSettings[i].offset)
+                                          * lavaPocketSettings[i].amplitude;
 
                         if (noiseLava > lavaPocketSettings[i].chance) {
                             chunkData[currentIndex] = lavaPocketSettings[i].block;
@@ -551,19 +551,12 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                     }
                 }
                 currentIndex++;
-
             }
         }
     }
 
     // Step 3: Surface Features
-    for
-    (
-        int i = 0;
-        i < surfaceFeaturesLength;
-        i
-        ++
-    ) {
+    for (int i = 0; i < surfaceFeaturesLength; i++) {
         for (int x = -surfaceFeatures[i].sizeX - surfaceFeatures[i].offsetX; x < chunkSize - surfaceFeatures[i].offsetX;
              x++) {
             for (int z = -surfaceFeatures[i].sizeZ - surfaceFeatures[i].offsetZ;
@@ -576,8 +569,8 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                             * surfaceSettings[s].amplitude;
                 }
 
-                if (noiseY + surfaceFeatures[i].offsetY > startY + chunkSize || noiseY + surfaceFeatures[i].sizeY +
-                    surfaceFeatures[i].offsetY < startY)
+                if (noiseY + surfaceFeatures[i].offsetY > startY + chunkSize ||
+                    noiseY + surfaceFeatures[i].sizeY + surfaceFeatures[i].offsetY < startY)
                     continue;
 
                 // Check if it's in water or on sand
@@ -616,32 +609,35 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                     int featureY = noiseY;
                     int featureZ = z + startZ;
 
+                    // Ensure the block below is NOT water
+                    int belowLocalIndex = (featureX - startX) * chunkSize * chunkSize +
+                                          (featureZ - startZ) * chunkSize +
+                                          (featureY - 1 - startY);
+
+                    if (belowLocalIndex < 0 || belowLocalIndex >= chunkSize * chunkSize * chunkSize)
+                        continue;
+
+                    if (chunkData[belowLocalIndex] == 2)
+                        continue; // Skip if the block below is water
+
                     for (int fX = 0; fX < surfaceFeatures[i].sizeX; fX++) {
                         for (int fY = 0; fY < surfaceFeatures[i].sizeY; fY++) {
                             for (int fZ = 0; fZ < surfaceFeatures[i].sizeZ; fZ++) {
                                 int localX = featureX + fX + surfaceFeatures[i].offsetX - startX;
-                                //std::cout << "FeatureX: " << featureX << ", fX: " << fX << ", startX: " << startX << ", localX: " << localX << '\n';
                                 int localY = featureY + fY + surfaceFeatures[i].offsetY - startY;
-                                //std::cout << "FeatureY: " << featureY << ", fY: " << fY << ", startY: " << startY << ", localY: " << localY << '\n';
                                 int localZ = featureZ + fZ + surfaceFeatures[i].offsetZ - startZ;
-                                //std::cout << "FeatureZ: " << featureZ << ", fZ: " << fZ << ", startZ: " << startZ << ", localZ: " << localZ << '\n';
 
-                                if (localX >= chunkSize || localX < 0)
-                                    continue;
-                                if (localY >= chunkSize || localY < 0)
-                                    continue;
-                                if (localZ >= chunkSize || localZ < 0)
+                                if (localX >= chunkSize || localX < 0 || localY >= chunkSize || localY < 0 || localZ >=
+                                    chunkSize || localZ < 0)
                                     continue;
 
                                 int featureIndex = fY * surfaceFeatures[i].sizeX * surfaceFeatures[i].sizeZ +
-                                                   fX * surfaceFeatures[i].sizeZ +
-                                                   fZ;
-                                //std::cout << "Feature Index: " << featureIndex << '\n';
+                                                   fX * surfaceFeatures[i].sizeZ + fZ;
                                 int localIndex = localX * chunkSize * chunkSize + localZ * chunkSize + localY;
-                                //std::cout << "Local Index: " << localIndex << ", Max Index: " << chunkData->size() << '\n';
 
-                                if (surfaceFeatures[i].replaceBlock[featureIndex] || chunkData[localIndex] == 0)
+                                if (surfaceFeatures[i].replaceBlock[featureIndex] || chunkData[localIndex] == 0) {
                                     chunkData[localIndex] = surfaceFeatures[i].blocks[featureIndex];
+                                }
                             }
                         }
                     }
