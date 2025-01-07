@@ -103,15 +103,15 @@ void Chunk::generateChunkMesh() {
                         // Optimize the combined conditions for rendering to reduce redundant checks
                         bool isNorthBlockLiquid = northBlockType->blockType == Block::LIQUID;
                         bool isBlockLiquid = block->blockType == Block::LIQUID;
-                        bool isNorthTopTransparent = northTopBlockType->blockType == Block::TRANSPARENT;
 
                         // Combine all rendering conditions, including the additional liquid-specific checks
                         bool shouldRender = (northBlockType->blockType == Block::LEAVES)
                                             || (northBlockType->blockType == Block::TRANSPARENT)
                                             || (northBlockType->blockType == Block::BILLBOARD)
                                             || (isNorthBlockLiquid && !isBlockLiquid) // Liquid next to non-liquid
-                                            || (isBlockLiquid && topBlockType->blockType == Block::LIQUID
-                                                && isNorthBlockLiquid && waterTopValue == 0
+                                            || (isBlockLiquid
+                                                && isNorthBlockLiquid
+                                                && waterTopValue == 0
                                                 && northTopBlockType->blockType != Block::LIQUID);
                         // Special liquid case
 
@@ -157,15 +157,15 @@ void Chunk::generateChunkMesh() {
                         // Optimize the combined conditions for rendering to reduce redundant checks
                         bool isSouthBlockLiquid = southBlockType->blockType == Block::LIQUID;
                         bool isBlockLiquid = block->blockType == Block::LIQUID;
-                        bool isSouthTopTransparent = southTopBlockType->blockType == Block::TRANSPARENT;
 
                         // Combine all rendering conditions, including the additional liquid-specific checks
                         bool shouldRender = (southBlockType->blockType == Block::LEAVES)
                                             || (southBlockType->blockType == Block::TRANSPARENT)
                                             || (southBlockType->blockType == Block::BILLBOARD)
                                             || (isSouthBlockLiquid && !isBlockLiquid) // Liquid next to non-liquid
-                                            || (isBlockLiquid && topBlockType->blockType == Block::LIQUID
-                                                && isSouthBlockLiquid && waterTopValue == 0
+                                            || (isBlockLiquid
+                                                && isSouthBlockLiquid
+                                                && waterTopValue == 0
                                                 && southTopBlockType->blockType != Block::LIQUID);
                         // Special liquid case
 
@@ -210,15 +210,15 @@ void Chunk::generateChunkMesh() {
                         // Optimize the combined conditions for rendering to reduce redundant checks
                         bool isWestBlockLiquid = westBlockType->blockType == Block::LIQUID;
                         bool isBlockLiquid = block->blockType == Block::LIQUID;
-                        bool isWestTopTransparent = westTopBlockType->blockType == Block::TRANSPARENT;
 
                         // Combine all rendering conditions, including the additional liquid-specific checks
                         bool shouldRender = (westBlockType->blockType == Block::LEAVES)
                                             || (westBlockType->blockType == Block::TRANSPARENT)
                                             || (westBlockType->blockType == Block::BILLBOARD)
                                             || (isWestBlockLiquid && !isBlockLiquid) // Liquid next to non-liquid
-                                            || (isBlockLiquid && topBlockType->blockType == Block::LIQUID
-                                                && isWestBlockLiquid && waterTopValue == 0
+                                            || (isBlockLiquid
+                                                && isWestBlockLiquid
+                                                && waterTopValue == 0
                                                 && westTopBlockType->blockType != Block::LIQUID); // Special liquid case
 
                         // Prevent rendering if the block above is solid
@@ -262,15 +262,15 @@ void Chunk::generateChunkMesh() {
                         // Optimize the combined conditions for rendering to reduce redundant checks
                         bool isEastBlockLiquid = eastBlockType->blockType == Block::LIQUID;
                         bool isBlockLiquid = block->blockType == Block::LIQUID;
-                        bool isEastTopTransparent = eastTopBlockType->blockType == Block::TRANSPARENT;
 
                         // Combine all rendering conditions, including the additional liquid-specific checks
                         bool shouldRender = (eastBlockType->blockType == Block::LEAVES)
                                             || (eastBlockType->blockType == Block::TRANSPARENT)
                                             || (eastBlockType->blockType == Block::BILLBOARD)
                                             || (isEastBlockLiquid && !isBlockLiquid) // Liquid next to non-liquid
-                                            || (isBlockLiquid && topBlockType->blockType == Block::LIQUID
-                                                && isEastBlockLiquid && waterTopValue == 0
+                                            || (isBlockLiquid
+                                                && isEastBlockLiquid
+                                                && waterTopValue == 0
                                                 && eastTopBlockType->blockType != Block::LIQUID); // Special liquid case
 
                         // Prevent rendering if the block above is solid

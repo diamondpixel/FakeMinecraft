@@ -160,7 +160,7 @@ void GameObject::init() {
                 bck.fill_color[1] = 0.0;
                 bck.fill_color[2] = 0.45;
                 bck.fill_opacity = 0.6;
-               drawRect(windowX / 2, windowY / 2, windowX, windowY, bck);
+                drawRect(windowX / 2, windowY / 2, windowX, windowY, bck);
             } else if (Blocks::blocks[blockType].blockName == "LAVA") {
                 bck.fill_color[0] = 1.0;
                 bck.fill_color[1] = 0.5;
@@ -171,7 +171,7 @@ void GameObject::init() {
         }
 
         switch (gameState.state) {
-            case PLAYING:
+            case PLAYING: {
                 bck.fill_color[0] = 0.7;
                 bck.fill_color[1] = 0.7;
                 bck.fill_color[2] = 0.7;
@@ -179,7 +179,22 @@ void GameObject::init() {
                 bck.outline_opacity = 0.0f;
                 drawRect(windowX / 2, windowY / 2, 5, 25, bck);
                 drawRect(windowX / 2, windowY / 2, 25, 5, bck);
+
+                bck.fill_color[0] = 0.0; // Red
+                bck.fill_color[1] = 0.0; // Green
+                bck.fill_color[2] = 0.0; // Blue
+
+                std::string coordsText = "COORDS: " +
+                                         std::to_string(static_cast<int>(camera.Position.x)) + ", " +
+                                         std::to_string(static_cast<int>(camera.Position.y)) + ", " +
+                                         std::to_string(static_cast<int>(camera.Position.z));
+
+                drawText(10, 30, 15, "FPS: " + std::to_string((int) graphics::getFPS()), bck);
+                drawText(10, 50, 15, coordsText, bck);
+                drawText(10, 70, 15, "SELECTED BLOCK: " + Blocks::blocks[gameState.selectedBlock].blockName, bck);
+
                 break;
+            }
             case PAUSED:
                 bck.outline_opacity = 0.0f;
                 bck.fill_color[0] = 0.2;
