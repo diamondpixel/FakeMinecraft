@@ -14,7 +14,7 @@
 #include "./../Chunk/headers/ChunkPosHash.h"
 
 constexpr unsigned int CHUNK_SIZE = 32;
-inline int MIN_HEIGHT = -50;
+inline int MIN_HEIGHT = -200;
 inline long SEED = 0;
 
 class Planet

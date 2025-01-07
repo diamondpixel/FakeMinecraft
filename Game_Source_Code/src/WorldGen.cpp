@@ -433,7 +433,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
     };
     static int surfaceFeaturesLength = std::size(surfaceFeatures);
 
-    static int waterLevel = 12;
+    static int waterLevel = 14;
 
     // Account for chunk position
     int startX = chunkPos.x * chunkSize;
