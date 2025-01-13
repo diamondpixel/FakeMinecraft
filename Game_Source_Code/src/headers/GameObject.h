@@ -71,6 +71,8 @@ private:
 
     void keyboardCallBack(float deltaTime);
 
+    static void playSound(uint16_t block_id);
+
     Camera camera;
     graphics::TextureManager *textureManager;
     glm::vec3 inputDirection;

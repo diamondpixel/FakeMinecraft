@@ -180,9 +180,9 @@ void GameObject::init() {
                 drawRect(windowX / 2, windowY / 2, 5, 25, bck);
                 drawRect(windowX / 2, windowY / 2, 25, 5, bck);
 
-                bck.fill_color[0] = 0.0; // Red
-                bck.fill_color[1] = 0.0; // Green
-                bck.fill_color[2] = 0.0; // Blue
+                bck.fill_color[0] = 0.0;
+                bck.fill_color[1] = 0.0;
+                bck.fill_color[2] = 0.0;
 
                 std::string coordsText = "COORDS: " +
                                          std::to_string(static_cast<int>(camera.Position.x)) + ", " +
@@ -233,6 +233,7 @@ void GameObject::init() {
         mouseCallBack();
     });
 
+    graphics::playMusic("../assets/sounds/songs/Minecraft Volume Alpha.ogg", 0.8f, true);
     graphics::startMessageLoop();
 }
 
@@ -392,6 +393,8 @@ void GameObject::handlePlayingMouseInput(graphics::MouseState &ms) {
             return;
 
         if (ms.button_left_pressed) {
+            playSound(result.chunk->getBlockAtPos(result.localBlockX, result.localBlockY,
+                                                  result.localBlockZ));
             result.chunk->updateBlock(result.localBlockX, result.localBlockY, result.localBlockZ, 0);
         }
 
@@ -433,6 +436,7 @@ void GameObject::handlePlayingMouseInput(graphics::MouseState &ms) {
                         return;
                     }
                 }
+                playSound(gameState.selectedBlock);
                 chunk->updateBlock(localBlockX, localBlockY, localBlockZ, gameState.selectedBlock);
             }
         }
@@ -479,5 +483,40 @@ void GameObject::keyboardCallBack(float deltaTime) {
         }
     } else {
         f11Pressed = false; // Reset when F11 is released
+    }
+}
+
+void GameObject::playSound(uint16_t block_id) {
+    switch (block_id) {
+        case 1:
+            graphics::playSound("../assets/sounds/DIRT.ogg", .4f);
+            break;
+        case 2:
+            graphics::playSound("../assets/sounds/GRASS_BLOCK.ogg", .4f);
+            break;
+        case 3:
+            graphics::playSound("../assets/sounds/STONE_BLOCK.ogg", .4f);
+            break;
+        case 4:
+            graphics::playSound("../assets/sounds/LOG.ogg", .4f);
+            break;
+        case 5:
+        case 6:
+        case 7:
+        case 8:
+        case 9:
+        case 10:
+        case 11:
+        case 12:
+            graphics::playSound("../assets/sounds/GRASS.ogg", .4f);
+            break;
+        case 15:
+            graphics::playSound("../assets/sounds/SAND.ogg", 1.f);
+            break;
+        case 16:
+        case 17:
+            graphics::playSound("../assets/sounds/STONE_BLOCK.ogg", .4f);
+            break;
+        default: break;
     }
 }
