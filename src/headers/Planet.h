@@ -11,10 +11,12 @@
 #include "../Chunk/headers/ChunkPos.h"
 #include "../Chunk/headers/ChunkData.h"
 #include "../Chunk/headers/Chunk.h"
-#include "./../Chunk/headers/ChunkPosHash.h"
+#include "./../Chunk/headers/ChunkPosHash.h"6
 
+inline int MAX_HEIGHT = 256;
 constexpr unsigned int CHUNK_SIZE = 32;
-inline int MIN_HEIGHT = -200;
+static int WATER_LEVEL = MAX_HEIGHT - 3;
+inline int MIN_HEIGHT = -256;
 inline long SEED = 0;
 
 class Planet
@@ -34,7 +36,7 @@ public:
     static Planet* planet;
     unsigned int numChunks = 0, numChunksRendered = 0;
     int renderDistance = 5;
-    int renderHeight = 3;
+    int renderHeight = 2;
 
 
 
