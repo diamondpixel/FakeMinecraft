@@ -239,11 +239,11 @@ void GameObject::init() {
 
 void GameObject::initializeGraphics() {
     // Initialize the graphics system
-    graphics::createWindow(windowX, windowY, "");
+    graphics::createWindow(windowX, windowY, "");-
     graphics::setFont("../assets/fonts/Arial.ttf");
     std::string path = "../assets/sprites/block_map.png";
 
-    camera = Camera(glm::vec3(0.0f, 25.0f, 0.0f));
+    camera = Camera(glm::vec3(0.0f, MAX_HEIGHT + 10, 0.0f));
     textureManager = &graphics::TextureManager::getInstance();
 
     gameTexture = textureManager->createTexture(
@@ -310,7 +310,7 @@ void GameObject::initializeUIElements() {
 
 void GameObject::updateShaders() {
     glm::mat4 view = camera.getViewMatrix();
-    glm::mat4 projection = glm::perspective(90.0f, windowX / windowY, 0.1f, 100.0f);
+    glm::mat4 projection = glm::perspective(90.0f, windowX / windowY, 0.1f, 10000.0f);
 
     worldShader.use(true);
     worldShader["SMART_view"] = view;

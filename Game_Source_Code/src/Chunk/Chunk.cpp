@@ -1,5 +1,6 @@
 #include "headers/Chunk.h"
 
+#include <iostream>
 #include <Shader.h>
 #include <GL/glew.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -73,51 +74,47 @@ void Chunk::generateChunkMesh() {
                 if (block->blockType == Block::BILLBOARD) {
                     generateBillboardFaces(x, y, z, PLACEHOLDER_VALUE, block, currentBillboardVertex);
                 } else {
+
                     // North
                     {
-                        // Initialize blocks to AIR by default to handle out-of-bounds cases
+                        // Initialize blocks with AIR by default
                         int northBlock = Blocks::AIR;
                         int northTopBlock = Blocks::AIR;
 
-                        // Determine if we're accessing the north block from the same chunk or a neighboring chunk
+                        // Determine north block and top block based on position
                         if (z > 0) {
-                            // Within the chunk, access the north block directly
+                            // Access north block and top block within the same chunk
                             northBlock = chunkData->getBlock(x, y, z - 1);
-                            if (y + 1 < CHUNK_SIZE) {
-                                // Access the block above the north block, ensure within vertical bounds
-                                northTopBlock = chunkData->getBlock(x, y + 1, z - 1);
-                            }
+                            northTopBlock = (y + 1 < CHUNK_SIZE)
+                                                ? chunkData->getBlock(x, y + 1, z - 1)
+                                                : upData->getBlock(x, 0, z - 1);
                         } else if (northData) {
-                            // At chunk boundary, access north block from neighboring chunk
+                            // Access north block and top block in neighboring chunk
                             northBlock = northData->getBlock(x, y, CHUNK_SIZE - 1);
-                            if (y + 1 < CHUNK_SIZE) {
-                                // Access the block above in the neighboring chunk
-                                northTopBlock = northData->getBlock(x, y + 1, CHUNK_SIZE - 1);
-                            }
+                            northTopBlock = (y + 1 < CHUNK_SIZE)
+                                                ? northData->getBlock(x, y + 1, CHUNK_SIZE - 1)
+                                                : Blocks::AIR;
                         }
 
-                        // Retrieve block types for the north block and the block above it
+                        // Retrieve block types once to avoid repeated access
                         const Block *northBlockType = &Blocks::blocks[northBlock];
                         const Block *northTopBlockType = &Blocks::blocks[northTopBlock];
 
-                        // Optimize the combined conditions for rendering to reduce redundant checks
-                        bool isNorthBlockLiquid = northBlockType->blockType == Block::LIQUID;
-                        bool isBlockLiquid = block->blockType == Block::LIQUID;
+                        // Precompute conditions for rendering
+                        bool isNorthBlockLiquid = (northBlockType->blockType == Block::LIQUID);
+                        bool isBlockLiquid = (block->blockType == Block::LIQUID);
 
-                        // Combine all rendering conditions, including the additional liquid-specific checks
-                        bool shouldRender = (northBlockType->blockType == Block::LEAVES)
-                                            || (northBlockType->blockType == Block::TRANSPARENT)
-                                            || (northBlockType->blockType == Block::BILLBOARD)
-                                            || (isNorthBlockLiquid && !isBlockLiquid) // Liquid next to non-liquid
-                                            || (isBlockLiquid
-                                                && isNorthBlockLiquid
-                                                && waterTopValue == 0
-                                                && northTopBlockType->blockType != Block::LIQUID);
-                        // Special liquid case
+                        // Combine rendering conditions into a single check
+                        bool shouldRender =
+                                (northBlockType->blockType == Block::LEAVES) ||
+                                (northBlockType->blockType == Block::TRANSPARENT) ||
+                                (northBlockType->blockType == Block::BILLBOARD) ||
+                                (isNorthBlockLiquid && !isBlockLiquid) ||
+                                (isBlockLiquid && isNorthBlockLiquid && waterTopValue == 0 && northTopBlockType->
+                                 blockType != Block::LIQUID);
 
-                        // Prevent rendering if the block above is solid
+                        // Render the face if conditions are met
                         if (shouldRender) {
-                            // Generate the appropriate faces based on block type
                             if (isBlockLiquid) {
                                 generateLiquidFaces(x, y, z, NORTH, block, currentLiquidVertex, waterTopValue);
                             } else {
@@ -126,52 +123,45 @@ void Chunk::generateChunkMesh() {
                         }
                     }
 
-
                     // South
                     {
-                        // Initialize blocks to AIR by default to handle out-of-bounds cases
+                        // Initialize blocks with AIR by default
                         int southBlock = Blocks::AIR;
                         int southTopBlock = Blocks::AIR;
 
-                        // Determine if we're accessing the south block from the same chunk or a neighboring chunk
+                        // Determine south block and top block based on position
                         if (z < CHUNK_SIZE - 1) {
-                            // Within the chunk, access the south block directly
+                            // Access south block and top block within the same chunk
                             southBlock = chunkData->getBlock(x, y, z + 1);
-                            if (y + 1 < CHUNK_SIZE) {
-                                // Access the block above the south block, ensure within vertical bounds
-                                southTopBlock = chunkData->getBlock(x, y + 1, z + 1);
-                            }
+                            southTopBlock = (y + 1 < CHUNK_SIZE)
+                                                ? chunkData->getBlock(x, y + 1, z + 1)
+                                                : upData->getBlock(x, 0, z + 1);
                         } else if (southData) {
-                            // At chunk boundary, access south block from neighboring chunk
+                            // Access south block and top block in neighboring chunk
                             southBlock = southData->getBlock(x, y, 0);
-                            if (y + 1 < CHUNK_SIZE) {
-                                // Access the block above in the neighboring chunk
-                                southTopBlock = southData->getBlock(x, y + 1, 0);
-                            }
+                            southTopBlock = (y + 1 < CHUNK_SIZE)
+                                                ? southData->getBlock(x, y + 1, 0)
+                                                : Blocks::AIR;
                         }
-
-                        // Retrieve block types for the south block and the block above it
+                        // Retrieve block types once to avoid repeated access
                         const Block *southBlockType = &Blocks::blocks[southBlock];
                         const Block *southTopBlockType = &Blocks::blocks[southTopBlock];
 
-                        // Optimize the combined conditions for rendering to reduce redundant checks
-                        bool isSouthBlockLiquid = southBlockType->blockType == Block::LIQUID;
-                        bool isBlockLiquid = block->blockType == Block::LIQUID;
+                        // Precompute conditions for rendering
+                        bool isSouthBlockLiquid = (southBlockType->blockType == Block::LIQUID);
+                        bool isBlockLiquid = (block->blockType == Block::LIQUID);
 
-                        // Combine all rendering conditions, including the additional liquid-specific checks
-                        bool shouldRender = (southBlockType->blockType == Block::LEAVES)
-                                            || (southBlockType->blockType == Block::TRANSPARENT)
-                                            || (southBlockType->blockType == Block::BILLBOARD)
-                                            || (isSouthBlockLiquid && !isBlockLiquid) // Liquid next to non-liquid
-                                            || (isBlockLiquid
-                                                && isSouthBlockLiquid
-                                                && waterTopValue == 0
-                                                && southTopBlockType->blockType != Block::LIQUID);
-                        // Special liquid case
+                        // Combine rendering conditions into a single check
+                        bool shouldRender =
+                                (southBlockType->blockType == Block::LEAVES) ||
+                                (southBlockType->blockType == Block::TRANSPARENT) ||
+                                (southBlockType->blockType == Block::BILLBOARD) ||
+                                (isSouthBlockLiquid && !isBlockLiquid) ||
+                                (isBlockLiquid && isSouthBlockLiquid && waterTopValue == 0 && southTopBlockType->
+                                 blockType != Block::LIQUID);
 
-                        // Prevent rendering if the block above is solid
+                        // Render the face if conditions are met
                         if (shouldRender) {
-                            // Generate the appropriate faces based on block type
                             if (isBlockLiquid) {
                                 generateLiquidFaces(x, y, z, SOUTH, block, currentLiquidVertex, waterTopValue);
                             } else {
@@ -182,48 +172,43 @@ void Chunk::generateChunkMesh() {
 
                     // West
                     {
-                        // Initialize blocks to AIR by default to handle out-of-bounds cases
+                        // Initialize blocks with AIR by default
                         int westBlock = Blocks::AIR;
                         int westTopBlock = Blocks::AIR;
 
-                        // Determine if we're accessing the west block from the same chunk or a neighboring chunk
+                        // Determine west block and top block based on position
                         if (x > 0) {
-                            // Within the chunk, access the west block directly
                             westBlock = chunkData->getBlock(x - 1, y, z);
-                            if (y + 1 < CHUNK_SIZE) {
-                                // Access the block above the west block, ensure within vertical bounds
-                                westTopBlock = chunkData->getBlock(x - 1, y + 1, z);
-                            }
-                        } else if (westData) {
-                            // At chunk boundary, access west block from neighboring chunk
+                            westTopBlock = (y + 1 < CHUNK_SIZE)
+                                               ? chunkData->getBlock(x - 1, y + 1, z)
+                                               : upData->getBlock(x - 1, 0, z);
+                        } else {
+                            // At chunk boundary, use neighboring chunk
                             westBlock = westData->getBlock(CHUNK_SIZE - 1, y, z);
-                            if (y + 1 < CHUNK_SIZE) {
-                                // Access the block above in the neighboring chunk
-                                westTopBlock = westData->getBlock(CHUNK_SIZE - 1, y + 1, z);
-                            }
+                            westTopBlock = (y + 1 < CHUNK_SIZE)
+                                               ? westData->getBlock(CHUNK_SIZE - 1, y + 1, z)
+                                               : Blocks::AIR;
                         }
 
-                        // Retrieve block types for the west block and the block above it
+                        // Retrieve block types once to avoid repeated access
                         const Block *westBlockType = &Blocks::blocks[westBlock];
                         const Block *westTopBlockType = &Blocks::blocks[westTopBlock];
 
-                        // Optimize the combined conditions for rendering to reduce redundant checks
-                        bool isWestBlockLiquid = westBlockType->blockType == Block::LIQUID;
-                        bool isBlockLiquid = block->blockType == Block::LIQUID;
+                        // Precompute conditions for rendering
+                        bool isWestBlockLiquid = (westBlockType->blockType == Block::LIQUID);
+                        bool isBlockLiquid = (block->blockType == Block::LIQUID);
 
-                        // Combine all rendering conditions, including the additional liquid-specific checks
-                        bool shouldRender = (westBlockType->blockType == Block::LEAVES)
-                                            || (westBlockType->blockType == Block::TRANSPARENT)
-                                            || (westBlockType->blockType == Block::BILLBOARD)
-                                            || (isWestBlockLiquid && !isBlockLiquid) // Liquid next to non-liquid
-                                            || (isBlockLiquid
-                                                && isWestBlockLiquid
-                                                && waterTopValue == 0
-                                                && westTopBlockType->blockType != Block::LIQUID); // Special liquid case
+                        // Combine rendering conditions into a single check
+                        bool shouldRender =
+                                (westBlockType->blockType == Block::LEAVES) ||
+                                (westBlockType->blockType == Block::TRANSPARENT) ||
+                                (westBlockType->blockType == Block::BILLBOARD) ||
+                                (isWestBlockLiquid && !isBlockLiquid) ||
+                                (isBlockLiquid && isWestBlockLiquid && waterTopValue == 0 && westTopBlockType->blockType
+                                 != Block::LIQUID);
 
-                        // Prevent rendering if the block above is solid
+                        // Render the face if conditions are met
                         if (shouldRender) {
-                            // Generate the appropriate faces based on block type
                             if (isBlockLiquid) {
                                 generateLiquidFaces(x, y, z, WEST, block, currentLiquidVertex, waterTopValue);
                             } else {
@@ -232,50 +217,40 @@ void Chunk::generateChunkMesh() {
                         }
                     }
 
+
                     // East
                     {
-                        // Initialize blocks to AIR by default to handle out-of-bounds cases
                         int eastBlock = Blocks::AIR;
                         int eastTopBlock = Blocks::AIR;
 
-                        // Determine if we're accessing the east block from the same chunk or a neighboring chunk
+                        // Determine east block and top block based on position and neighboring chunks
                         if (x < CHUNK_SIZE - 1) {
-                            // Within the chunk, access the east block directly
                             eastBlock = chunkData->getBlock(x + 1, y, z);
-                            if (y + 1 < CHUNK_SIZE) {
-                                // Access the block above the east block, ensure within vertical bounds
-                                eastTopBlock = chunkData->getBlock(x + 1, y + 1, z);
-                            }
-                        } else if (eastData) {
-                            // At chunk boundary, access east block from neighboring chunk
+                            eastTopBlock = (y + 1 < CHUNK_SIZE)
+                                               ? chunkData->getBlock(x + 1, y + 1, z)
+                                               : upData->getBlock(x + 1, 0, z);
+                        } else {
+                            // At chunk boundary, use neighboring chunk
                             eastBlock = eastData->getBlock(0, y, z);
-                            if (y + 1 < CHUNK_SIZE) {
-                                // Access the block above in the neighboring chunk
-                                eastTopBlock = eastData->getBlock(0, y + 1, z);
-                            }
+                            eastTopBlock = (y + 1 < CHUNK_SIZE) ? eastData->getBlock(0, y + 1, z) : Blocks::AIR;
                         }
 
-                        // Retrieve block types for the east block and the block above it
+                        // Retrieve block types
                         const Block *eastBlockType = &Blocks::blocks[eastBlock];
                         const Block *eastTopBlockType = &Blocks::blocks[eastTopBlock];
 
-                        // Optimize the combined conditions for rendering to reduce redundant checks
-                        bool isEastBlockLiquid = eastBlockType->blockType == Block::LIQUID;
-                        bool isBlockLiquid = block->blockType == Block::LIQUID;
+                        // Precompute reusable flags
+                        bool isEastBlockLiquid = (eastBlockType->blockType == Block::LIQUID);
+                        bool isBlockLiquid = (block->blockType == Block::LIQUID);
+                        bool isEastBlockRenderable =
+                                (eastBlockType->blockType == Block::LEAVES) ||
+                                (eastBlockType->blockType == Block::TRANSPARENT) ||
+                                (eastBlockType->blockType == Block::BILLBOARD) ||
+                                (isEastBlockLiquid && !isBlockLiquid) ||
+                                (isBlockLiquid && isEastBlockLiquid && waterTopValue == 0 && eastTopBlockType->blockType
+                                 != Block::LIQUID);
 
-                        // Combine all rendering conditions, including the additional liquid-specific checks
-                        bool shouldRender = (eastBlockType->blockType == Block::LEAVES)
-                                            || (eastBlockType->blockType == Block::TRANSPARENT)
-                                            || (eastBlockType->blockType == Block::BILLBOARD)
-                                            || (isEastBlockLiquid && !isBlockLiquid) // Liquid next to non-liquid
-                                            || (isBlockLiquid
-                                                && isEastBlockLiquid
-                                                && waterTopValue == 0
-                                                && eastTopBlockType->blockType != Block::LIQUID); // Special liquid case
-
-                        // Prevent rendering if the block above is solid
-                        if (shouldRender) {
-                            // Generate the appropriate faces based on block type
+                        if (isEastBlockRenderable) {
                             if (isBlockLiquid) {
                                 generateLiquidFaces(x, y, z, EAST, block, currentLiquidVertex, waterTopValue);
                             } else {
@@ -283,8 +258,6 @@ void Chunk::generateChunkMesh() {
                             }
                         }
                     }
-
-
                     // Bottom
                     {
                         int bottomBlock;
@@ -331,12 +304,7 @@ void Chunk::generateChunkMesh() {
             }
         }
     }
-
-    //std::cout << "Finished generating in thread: " << std::this_thread::get_id() << '\n';
-
     generated = true;
-
-    //std::cout << "Generated: " << generated << '\n';
 }
 
 void Chunk::generateWorldFaces(int x, int y, int z, FACE_DIRECTION faceDirection, const Block *block,
@@ -572,6 +540,9 @@ void Chunk::render(Shader *mainShader, Shader *billboardShader) {
 
         return;
     }
+
+    //std::cout << "Rendering chunk " << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << '\n'
+    //<< " Triangles: " << numTrianglesBillboard + numTrianglesWorld << '\n';
 
 
     // Calculate model matrix

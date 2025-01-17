@@ -23,17 +23,17 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
     static int surfaceSettingsLength = std::size(surfaceSettings);
 
     static NoiseSettings caveSettings[]{
-        {0.05f, 1.0f, 0, .5f, 0, 100}
+        {0.05f, 1.0f, 0, .5f, 0, MAX_HEIGHT-10}
     };
     static int caveSettingsLength = std::size(caveSettings);
 
     static NoiseSettings oreSettings[]{
-        {0.075f, 1.0f, 8.54f, .75f, 16, 0}
+        {0.075f, 1.0f, 8.54f, .75f, 16, MAX_HEIGHT-20}
     };
     static int oreSettingsLength = std::size(oreSettings);
 
     static NoiseSettings lavaPocketSettings[]{
-        {0.075f, 1.5f, 5.54f, .79f, 14, 0}
+        {0.075f, 1.5f, 5.54f, .79f, 14, MAX_HEIGHT-20}
     };
     static int lavaPocketSettingsLength = std::size(lavaPocketSettings);
 
@@ -433,24 +433,16 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
     };
     static int surfaceFeaturesLength = std::size(surfaceFeatures);
 
-    static int waterLevel = 14;
-
     // Account for chunk position
     int startX = chunkPos.x * chunkSize;
     int startY = chunkPos.y * chunkSize;
     int startZ = chunkPos.z * chunkSize;
 
     int currentIndex = 0;
-    for
-    (
-        int x = 0;
-        x < chunkSize;
-        x
-        ++
-    ) {
+    for(int x = 0;x < chunkSize;x++) {
         for (int z = 0; z < chunkSize; z++) {
             // Surface noise
-            int noiseY = 15;
+            int noiseY = MAX_HEIGHT;
             for (int i = 0; i < surfaceSettingsLength; i++) {
                 noiseY += noise2D.eval(
                             (float) ((x + startX) * surfaceSettings[i].frequency) + surfaceSettings[i].offset,
@@ -482,7 +474,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                 // Sky and Caves
 
                 if (y + startY > noiseY) {
-                    if (y + startY <= waterLevel)
+                    if (y + startY <= WATER_LEVEL)
                         chunkData[currentIndex] = Blocks::WATER;
                     else
                         chunkData[currentIndex] = Blocks::AIR;
@@ -533,12 +525,12 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
 
                     if (!blockSet) {
                         if (y + startY == noiseY)
-                            if (noiseY > waterLevel + 1)
+                            if (noiseY > WATER_LEVEL + 1)
                                 chunkData[currentIndex] = Blocks::GRASS_BLOCK;
                             else
                                 chunkData[currentIndex] = Blocks::SAND;
-                        else if (y + startY > 10)
-                            if (noiseY > waterLevel + 1)
+                        else if (y + startY > WATER_LEVEL - 5)
+                            if (noiseY > WATER_LEVEL + 1)
                                 chunkData[currentIndex] = Blocks::DIRT_BLOCK;
                             else
                                 chunkData[currentIndex] = Blocks::SAND;
@@ -561,7 +553,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
              x++) {
             for (int z = -surfaceFeatures[i].sizeZ - surfaceFeatures[i].offsetZ;
                  z < chunkSize - surfaceFeatures[i].offsetZ; z++) {
-                int noiseY = 15;
+                int noiseY = MAX_HEIGHT;
                 for (int s = 0; s < surfaceSettingsLength; s++) {
                     noiseY += noise2D.eval(
                                 (float) ((x + startX) * surfaceSettings[s].frequency) + surfaceSettings[s].offset,
@@ -574,7 +566,7 @@ void WorldGen::generateChunkData(ChunkPos chunkPos, uint32_t *chunkData, long se
                     continue;
 
                 // Check if it's in water or on sand
-                if (noiseY < waterLevel + 2)
+                if (noiseY < WATER_LEVEL + 2)
                     continue;
 
                 // Check if it's in a cave
