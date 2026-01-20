@@ -7,7 +7,12 @@ include(${CMAKE_SOURCE_DIR}/CMakeScripts/PowerShell.cmake)
 set(CMAKE_CXX_STANDARD 17)
 set(DEP_LIB ${CMAKE_SOURCE_DIR}/dependencies/lib)
 set(ASSETS_DIR "${CMAKE_SOURCE_DIR}/assets")
-set(APP_ICON "${CMAKE_SOURCE_DIR}/assets/sprites/logo.ico")
+set(APP_ICON "${CMAKE_SOURCE_DIR}/assets/sprites/logo.ico"
+        src/World/Chunk/ChunkMeshGeneration.cpp
+        src/World/Chunk/headers/ChunkGreedyMeshing.h
+        src/World/Chunk/headers/ChunkUtils.h
+        src/World/Chunk/ChunkRendering.cpp
+        src/World/Chunk/ChunkFaceGeneration.cpp)
 
 file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS
         src/*.h

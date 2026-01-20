@@ -8,9 +8,13 @@
 struct ChunkData {
     uint8_t *data;
 
-    explicit ChunkData(uint8_t *data);
+    explicit ChunkData(uint8_t *data)
+        : data(data) {
+    }
 
-    ~ChunkData();
+    ~ChunkData() {
+        delete[] data;
+    }
 
     [[nodiscard]] static int getIndex(const int x, const int y, const int z) {
         return x * CHUNK_WIDTH * CHUNK_HEIGHT + z * CHUNK_HEIGHT + y;
