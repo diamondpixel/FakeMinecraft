@@ -14,12 +14,7 @@
 #include "Frustum.h"
 #include "ThreadPool.h"
 
-constexpr int MAX_HEIGHT = 256;
-constexpr int MIN_HEIGHT = 0;
-constexpr unsigned int CHUNK_WIDTH = 32;
-constexpr unsigned int CHUNK_HEIGHT = MAX_HEIGHT - (MIN_HEIGHT > 0 ? MIN_HEIGHT : -MIN_HEIGHT); // Manual abs for constexpr safety
-static int WATER_LEVEL = 64;
-inline long SEED = 0;
+#include "WorldConstants.h"
 
 // Hardware Occlusion Query Smoothing Methods
 enum class OcclusionMethod {
@@ -106,9 +101,11 @@ private:
     std::vector<Chunk*> waterChunks;
     std::vector<Chunk*> frustumVisibleChunks; // ALL chunks in frustum (for HOQ)
     std::vector<ChunkPos> toDeleteList;
-    
+
     // Chunk object pool (recycle instead of new/delete)
     std::vector<Chunk*> chunkPool;
+    std::vector<Chunk*> renderChunks; // Double-buffered list for rendering (only updated when dirty)
+    bool renderChunksDirty = false;
     
     // HOQ Smoothing Configuration
     OcclusionMethod occlusionMethod = OcclusionMethod::VOTING;

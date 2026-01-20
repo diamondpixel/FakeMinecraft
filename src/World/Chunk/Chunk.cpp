@@ -1205,12 +1205,12 @@ void Chunk::uploadMesh() {
 
     // Clear ALL CPU-side mesh data
     for (int i = 0; i < NUM_SUBCHUNKS; ++i) {
-        worldVertices[i].clear(); worldVertices[i].shrink_to_fit();
-        worldIndices[i].clear(); worldIndices[i].shrink_to_fit();
-        billboardVertices[i].clear(); billboardVertices[i].shrink_to_fit();
-        billboardIndices[i].clear(); billboardIndices[i].shrink_to_fit();
-        liquidVertices[i].clear(); liquidVertices[i].shrink_to_fit();
-        liquidIndices[i].clear(); liquidIndices[i].shrink_to_fit();
+        worldVertices[i].clear(); 
+        worldIndices[i].clear(); 
+        billboardVertices[i].clear(); 
+        billboardIndices[i].clear(); 
+        liquidVertices[i].clear(); 
+        liquidIndices[i].clear(); 
         subChunks[i].ready = true;
     }
 

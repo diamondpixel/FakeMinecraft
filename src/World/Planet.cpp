@@ -75,11 +75,12 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
 
     glDisable(GL_BLEND);
 
-    // OPTIMIZATION: Copy chunk list under lock, iterate outside lock to reduce contention
-    std::vector<Chunk*> localChunks;
-    {
+    if (renderChunksDirty) {
         std::lock_guard lock(chunkMutex);
-        localChunks = chunkList;  // Shallow copy of pointers (fast ~1 cache line per 8 chunks)
+        if (renderChunksDirty) {
+            renderChunks = chunkList;
+            renderChunksDirty = false;
+        }
     }
 
     int chunksUploadedThisFrame = 0;
@@ -87,7 +88,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
     const float maxDistSq = maxDist * maxDist;
 
     // Loop through all active chunks - NO LOCK HELD during iteration
-    for (Chunk *chunk: localChunks) {
+    for (Chunk *chunk: renderChunks) {
         const ChunkPos &pos = chunk->chunkPos;
         ++numChunks;
 
@@ -188,6 +189,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
                 chunkPool.push_back(const_cast<Chunk*>(chunk));
                 chunks.erase(it);
                 numChunks--;
+                renderChunksDirty = true;
             }
         }
     }
@@ -598,6 +600,7 @@ void Planet::processChunkQueue() {
         chunks[chunkPos] = chunk;
         chunk->listIndex = chunkList.size();
         chunkList.push_back(chunk);
+        renderChunksDirty = true;
 
         // OPTIMIZATION: Batched neighbor notifications (single loop instead of 6 separate lookups)
         // Each neighbor needs a specific data pointer from the new chunk
