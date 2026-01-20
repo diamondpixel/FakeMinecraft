@@ -1,8 +1,8 @@
 #version 330 core
 
-in vec2 TexCoord;
+in vec3 TexCoord;
 out vec4 FragColor;
-uniform sampler2D tex;
+uniform sampler2DArray tex;
 const vec3 ambient = vec3(.5);
 const vec3 lightDirection = vec3(0.8, 1, 0.7);
 const vec3 normal = vec3( 0, -1,  0);

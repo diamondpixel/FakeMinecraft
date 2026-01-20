@@ -1,9 +1,9 @@
 #version 330 core
 
-in vec2 TexCoord;
+in vec3 TexCoord;
 in vec3 Normal;
 out vec4 FragColor;
-uniform sampler2D tex;
+uniform sampler2DArray tex;
 vec3 ambient = vec3(.5);
 vec3 lightDirection = vec3(0.8, 1, 0.7);
 

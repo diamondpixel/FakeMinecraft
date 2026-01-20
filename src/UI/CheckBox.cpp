@@ -1,4 +1,4 @@
-#include "headers/Checkbox.h"
+#include "Checkbox.h"
 
 
 Checkbox::Checkbox() : x(400), y(300), size(50), checked(false) {
@@ -24,7 +24,7 @@ void Checkbox::draw() const {
     br.fill_color[0] = 0.0f;
     br.fill_color[1] = 0.0f;
     br.fill_color[2] = 0.0f;
-    float lilSmaller = size * 0.95;
+    const float lilSmaller = size * 0.95;
     drawRect(x, y, lilSmaller, lilSmaller, br);
 
     // Border for clarity

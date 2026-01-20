@@ -1,7 +1,7 @@
-#include <../../dependencies/include/GL/glew.h>
-#include "headers/Slider.h"
+#include <GL/glew.h>
+#include "Slider.h"
 #include <algorithm>
-#include <../../dependencies/include/Graphics.h>
+#include <Graphics.h>
 
 void Slider::draw() const {
     graphics::Brush brush;

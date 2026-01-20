@@ -8,7 +8,6 @@
 #include "scancodes.h"
 #include <vector>
 #include "Texture.h"
-#include "TextureManager.h"
 
 
 /** \file graphics.h This is the *only* library header file that is required to be included by your application.

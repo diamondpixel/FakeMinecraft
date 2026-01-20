@@ -20,6 +20,13 @@ file(GLOB SPRITE_FILES "${ASSETS_DIR}/sprites/*")
 include_directories(
         ${CMAKE_SOURCE_DIR}/dependencies/include
         ${CMAKE_SOURCE_DIR}/dependencies/lib
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/Core/headers
+        ${CMAKE_SOURCE_DIR}/src/World/headers
+        ${CMAKE_SOURCE_DIR}/src/World/Chunk/headers
+        ${CMAKE_SOURCE_DIR}/src/Renderer/headers
+        ${CMAKE_SOURCE_DIR}/src/Renderer/Vertices
+        ${CMAKE_SOURCE_DIR}/src/UI/headers
 )
 
 link_directories(

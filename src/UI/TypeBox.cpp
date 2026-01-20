@@ -1,4 +1,4 @@
-#include "headers/TypeBox.h"
+#include "TypeBox.h"
 #include <algorithm>
 #include <iostream>
 #include <ostream>
