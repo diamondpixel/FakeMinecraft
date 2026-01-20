@@ -3,7 +3,10 @@
 #include "ChunkGreedyMeshing.h"
 #include "Blocks.h"
 
+
 void Chunk::generateChunkMesh() {
+    if (!chunkData) return;
+
     // Clear and reserve per-subchunk buffers
     for (int i = 0; i < NUM_SUBCHUNKS; ++i) {
         worldVertices[i].clear();
@@ -45,65 +48,85 @@ void Chunk::generateHorizontalFaces(unsigned int* currentVertex) {
     static thread_local uint16_t topMask[CHUNK_WIDTH][CHUNK_WIDTH];
     static thread_local uint16_t bottomMask[CHUNK_WIDTH][CHUNK_WIDTH];
     static thread_local bool processed[CHUNK_WIDTH][CHUNK_WIDTH];
+    
+    // Thread-safe capture
+    auto localData = chunkData;
+    if (!localData) return;
+
+    const uint8_t* rawData = localData->data;
+    const int strideZ = CHUNK_HEIGHT;
+    const int strideX = CHUNK_WIDTH * CHUNK_HEIGHT;
+
+    // Helper to build masks for a single Y slice
+    auto buildMasksForY = [&](int y, bool isYMin, bool isYMax) {
+         // Clear masks
+         memset(topMask, 0, sizeof(topMask));
+         memset(bottomMask, 0, sizeof(bottomMask));
+         memset(processed, 0, sizeof(processed));
+
+         for (int x = 0; x < CHUNK_WIDTH; x++) {
+             int xOffset = x * strideX;
+             for (int z = 0; z < CHUNK_WIDTH; z++) {
+                 int idx = xOffset + z * strideZ + y;
+                 uint8_t blockId = rawData[idx];
+
+                 if (blockId == 0) continue;
+                 const Block* block = &Blocks::blocks[blockId];
+                 
+                 // Skip non-solid blocks for greedy meshing
+                 if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) {
+                     continue;
+                 }
+
+                 // Check TOP face
+                 uint8_t topBlockId;
+                 if (!isYMax) {
+                     topBlockId = rawData[idx + 1];
+                 } else {
+                     topBlockId = upData ? upData->getBlock(x, 0, z) : Blocks::AIR;
+                 }
+                 
+                 const Block* topBlockType = &Blocks::blocks[topBlockId];
+                 if (topBlockType->blockType == Block::LEAVES ||
+                     topBlockType->blockType == Block::TRANSPARENT ||
+                     topBlockType->blockType == Block::BILLBOARD ||
+                     topBlockType->blockType == Block::LIQUID) {
+                     topMask[x][z] = blockId;
+                 }
+
+                 // Check BOTTOM face
+                 uint8_t bottomBlockId;
+                 if (!isYMin) {
+                     bottomBlockId = rawData[idx - 1];
+                 } else {
+                     bottomBlockId = downData ? downData->getBlock(x, CHUNK_HEIGHT - 1, z) : Blocks::AIR;
+                 }
+
+                 const Block* bottomBlockType = &Blocks::blocks[bottomBlockId];
+                 if (bottomBlockType->blockType == Block::LEAVES ||
+                     bottomBlockType->blockType == Block::TRANSPARENT ||
+                     bottomBlockType->blockType == Block::BILLBOARD ||
+                     bottomBlockType->blockType == Block::LIQUID) {
+                     bottomMask[x][z] = blockId;
+                 }
+             }
+         }
+    };
 
     for (int y = 0; y < CHUNK_HEIGHT; y++) {
         int subChunkIndex = y / SUBCHUNK_HEIGHT;
+        
+        bool isYMin = (y == 0);
+        bool isYMax = (y == CHUNK_HEIGHT - 1);
 
-        // Clear masks for this height slice
-        memset(topMask, 0, sizeof(topMask));
-        memset(bottomMask, 0, sizeof(bottomMask));
-        memset(processed, 0, sizeof(processed));
-
-        // Build masks: which blocks have visible TOP/BOTTOM faces at this Y level?
-        buildHorizontalMasks(y, topMask, bottomMask);
+        // Build masks with optimized access
+        buildMasksForY(y, isYMin, isYMax);
 
         // Greedy merge TOP faces
         greedyMergeTopFaces(y, subChunkIndex, topMask, processed, currentVertex);
 
         // Greedy merge BOTTOM faces
         greedyMergeBottomFaces(y, subChunkIndex, bottomMask, processed, currentVertex);
-    }
-}
-
-void Chunk::buildHorizontalMasks(const int y, uint16_t topMask[][CHUNK_WIDTH], uint16_t bottomMask[][CHUNK_WIDTH]) const {
-    for (int x = 0; x < CHUNK_WIDTH; x++) {
-        for (int z = 0; z < CHUNK_WIDTH; z++) {
-            uint16_t blockId = chunkData->getBlock(x, y, z);
-            if (blockId == 0) continue;
-
-            const Block* block = &Blocks::blocks[blockId];
-
-            // Skip non-solid blocks for greedy meshing
-            if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) {
-                continue;
-            }
-
-            // Check TOP face visibility
-            int topBlock = (y < CHUNK_HEIGHT - 1)
-                ? chunkData->getBlock(x, y + 1, z)
-                : (upData ? upData->getBlock(x, 0, z) : Blocks::AIR);
-            const Block* topBlockType = &Blocks::blocks[topBlock];
-
-            if (topBlockType->blockType == Block::LEAVES ||
-                topBlockType->blockType == Block::TRANSPARENT ||
-                topBlockType->blockType == Block::BILLBOARD ||
-                topBlockType->blockType == Block::LIQUID) {
-                topMask[x][z] = blockId;
-            }
-
-            // Check BOTTOM face visibility
-            int bottomBlock = (y > 0)
-                ? chunkData->getBlock(x, y - 1, z)
-                : (downData ? downData->getBlock(x, CHUNK_HEIGHT - 1, z) : Blocks::AIR);
-            const Block* bottomBlockType = &Blocks::blocks[bottomBlock];
-
-            if (bottomBlockType->blockType == Block::LEAVES ||
-                bottomBlockType->blockType == Block::TRANSPARENT ||
-                bottomBlockType->blockType == Block::BILLBOARD ||
-                bottomBlockType->blockType == Block::LIQUID) {
-                bottomMask[x][z] = blockId;
-            }
-        }
     }
 }
 
@@ -210,72 +233,223 @@ void Chunk::generateVerticalFaces(unsigned int* currentVertex) {
 void Chunk::generateZAxisFaces(unsigned int* currentVertex, uint16_t maskA[][CHUNK_HEIGHT],
                                uint16_t maskB[][CHUNK_HEIGHT], bool processedSide[][CHUNK_HEIGHT]) {
     NeighborData neighbor{};
+    
+    auto localData = chunkData;
+    if (!localData) return;
 
-    for (int z = 0; z < CHUNK_WIDTH; z++) {
+    // Direct pointer access setup
+    const uint8_t* rawData = localData->data;
+    const int strideZ = CHUNK_HEIGHT; // Stride for Z is just CHUNK_HEIGHT
+    const int strideX = CHUNK_WIDTH * CHUNK_HEIGHT;
+
+    // Helper lambda for boundary/complex cases
+    auto handleBoundaryZ = [&](int z) {
         memset(maskA, 0, sizeof(uint16_t) * CHUNK_WIDTH * CHUNK_HEIGHT);
         memset(maskB, 0, sizeof(uint16_t) * CHUNK_WIDTH * CHUNK_HEIGHT);
         memset(processedSide, 0, sizeof(bool) * CHUNK_WIDTH * CHUNK_HEIGHT);
 
-        // Build masks
         for (int x = 0; x < CHUNK_WIDTH; x++) {
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
-                uint16_t blockId = chunkData->getBlock(x, y, z);
+                uint16_t blockId = localData->getBlock(x, y, z);
                 if (blockId == 0) continue;
                 const Block* block = &Blocks::blocks[blockId];
                 if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) continue;
 
-                // Check North Neighbor (-Z)
-                fetchNorthNeighbor(neighbor, x, y, z, chunkData, northData, upData);
+                fetchNorthNeighbor(neighbor, x, y, z, localData, northData, upData);
                 if (shouldRenderFace(neighbor, false)) maskA[x][y] = blockId;
 
-                // Check South Neighbor (+Z)
-                fetchSouthNeighbor(neighbor, x, y, z, chunkData, southData, upData);
+                fetchSouthNeighbor(neighbor, x, y, z, localData, southData, upData);
                 if (shouldRenderFace(neighbor, false)) maskB[x][y] = blockId;
             }
         }
-
-        // Greedy Mesh North
+        
         greedyMergeNorthFaces(z, maskA, processedSide, currentVertex);
+        memset(processedSide, 0, sizeof(bool) * CHUNK_WIDTH * CHUNK_HEIGHT);
+        greedyMergeSouthFaces(z, maskB, processedSide, currentVertex);
+    };
 
-        // Greedy Mesh South
+    // 1. Handle North Boundary (Z=0)
+    handleBoundaryZ(0);
+
+    // 2. Handle Internal Slices (Z=1 to 30)
+    for (int z = 1; z < CHUNK_WIDTH - 1; z++) {
+        memset(maskA, 0, sizeof(uint16_t) * CHUNK_WIDTH * CHUNK_HEIGHT);
+        memset(maskB, 0, sizeof(uint16_t) * CHUNK_WIDTH * CHUNK_HEIGHT);
+        memset(processedSide, 0, sizeof(bool) * CHUNK_WIDTH * CHUNK_HEIGHT);
+
+        // Calculate base offset for this Z plane
+        // idx = x * strideX + z * strideZ + y
+        // We will iterate x, then update base pointer
+        int zOffset = z * strideZ;
+
+        for (int x = 0; x < CHUNK_WIDTH; x++) {
+            int xOffset = x * strideX;
+            int currentConstOffset = xOffset + zOffset; // Base offset for (x, *, z)
+
+            for (int y = 0; y < CHUNK_HEIGHT; y++) {
+                int idx = currentConstOffset + y;
+                uint8_t blockId = rawData[idx];
+
+                if (blockId == 0) continue;
+                
+                // We know block is solid/leaves check, but let's defer that lookup if possible? 
+                // No, we need to know if we should cull self too.
+                // Optimizing: Only look up block type if ID > 0
+                const Block* block = &Blocks::blocks[blockId];
+                if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) continue;
+
+                // --- North Neighbor (Z-1) ---
+                // Internal Z means Z-1 is in this chunk.
+                // Neighbor index = idx - strideZ
+                // Neighbor Top index = idx - strideZ + 1 (if y < MAX)
+                {
+                    int nIdx = idx - strideZ;
+                    uint8_t nBlock = rawData[nIdx];
+                    
+                    // Top block logic
+                    uint8_t nTopBlock;
+                    if (y < CHUNK_HEIGHT - 1) {
+                         nTopBlock = rawData[nIdx + 1];
+                    } else {
+                         // y is max, need upData
+                         nTopBlock = upData ? upData->getBlock(x, 0, z - 1) : Blocks::AIR;
+                    }
+                    
+                    neighbor.init(nBlock, nTopBlock);
+                    if (shouldRenderFace(neighbor, false)) maskA[x][y] = blockId;
+                }
+
+                // --- South Neighbor (Z+1) ---
+                // Internal Z means Z+1 is in this chunk.
+                // Neighbor index = idx + strideZ
+                {
+                    int sIdx = idx + strideZ;
+                    uint8_t sBlock = rawData[sIdx];
+                    
+                    uint8_t sTopBlock;
+                    if (y < CHUNK_HEIGHT - 1) {
+                         sTopBlock = rawData[sIdx + 1];
+                    } else {
+                         sTopBlock = upData ? upData->getBlock(x, 0, z + 1) : Blocks::AIR;
+                    }
+
+                    neighbor.init(sBlock, sTopBlock);
+                    if (shouldRenderFace(neighbor, false)) maskB[x][y] = blockId;
+                }
+            }
+        }
+
+        greedyMergeNorthFaces(z, maskA, processedSide, currentVertex);
         memset(processedSide, 0, sizeof(bool) * CHUNK_WIDTH * CHUNK_HEIGHT);
         greedyMergeSouthFaces(z, maskB, processedSide, currentVertex);
     }
+
+    // 3. Handle South Boundary (Z=31)
+    handleBoundaryZ(CHUNK_WIDTH - 1);
 }
 
 void Chunk::generateXAxisFaces(unsigned int* currentVertex, uint16_t maskA[][CHUNK_HEIGHT],
                                uint16_t maskB[][CHUNK_HEIGHT], bool processedSide[][CHUNK_HEIGHT]) {
     NeighborData neighbor{};
+    
+    auto localData = chunkData;
+    if (!localData) return;
 
-    for (int x = 0; x < CHUNK_WIDTH; x++) {
+    // Direct pointer access setup
+    const uint8_t* rawData = localData->data;
+    const int strideZ = CHUNK_HEIGHT;
+    const int strideX = CHUNK_WIDTH * CHUNK_HEIGHT;
+
+    auto handleBoundaryX = [&](int x) {
         memset(maskA, 0, sizeof(uint16_t) * CHUNK_WIDTH * CHUNK_HEIGHT);
         memset(maskB, 0, sizeof(uint16_t) * CHUNK_WIDTH * CHUNK_HEIGHT);
         memset(processedSide, 0, sizeof(bool) * CHUNK_WIDTH * CHUNK_HEIGHT);
 
         for (int z = 0; z < CHUNK_WIDTH; z++) {
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
-                uint16_t blockId = chunkData->getBlock(x, y, z);
+                uint16_t blockId = localData->getBlock(x, y, z);
                 if (blockId == 0) continue;
                 const Block* block = &Blocks::blocks[blockId];
                 if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) continue;
 
-                // West (-X)
-                fetchWestNeighbor(neighbor, x, y, z, chunkData, westData, upData);
+                fetchWestNeighbor(neighbor, x, y, z, localData, westData, upData);
                 if (shouldRenderFace(neighbor, false)) maskA[z][y] = blockId;
 
-                // East (+X)
-                fetchEastNeighbor(neighbor, x, y, z, chunkData, eastData, upData);
+                fetchEastNeighbor(neighbor, x, y, z, localData, eastData, upData);
                 if (shouldRenderFace(neighbor, false)) maskB[z][y] = blockId;
             }
         }
-
-        // Greedy Mesh West
+        
         greedyMergeWestFaces(x, maskA, processedSide, currentVertex);
+        memset(processedSide, 0, sizeof(bool) * CHUNK_WIDTH * CHUNK_HEIGHT);
+        greedyMergeEastFaces(x, maskB, processedSide, currentVertex);
+    };
 
-        // Greedy Mesh East
+    // 1. West Boundary (X=0)
+    handleBoundaryX(0);
+
+    // 2. Internal Slices (X=1 to 30)
+    for (int x = 1; x < CHUNK_WIDTH - 1; x++) {
+        memset(maskA, 0, sizeof(uint16_t) * CHUNK_WIDTH * CHUNK_HEIGHT);
+        memset(maskB, 0, sizeof(uint16_t) * CHUNK_WIDTH * CHUNK_HEIGHT);
+        memset(processedSide, 0, sizeof(bool) * CHUNK_WIDTH * CHUNK_HEIGHT);
+        
+        int xOffset = x * strideX;
+
+        for (int z = 0; z < CHUNK_WIDTH; z++) {
+            int currentConstOffset = xOffset + z * strideZ;
+
+            for (int y = 0; y < CHUNK_HEIGHT; y++) {
+                int idx = currentConstOffset + y;
+                uint8_t blockId = rawData[idx];
+
+                if (blockId == 0) continue;
+                const Block* block = &Blocks::blocks[blockId];
+                if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) continue;
+
+                // --- West Neighbor (X-1) ---
+                // Neighbor index = idx - strideX
+                {
+                    int wIdx = idx - strideX;
+                    uint8_t wBlock = rawData[wIdx];
+                    
+                    uint8_t wTopBlock;
+                    if (y < CHUNK_HEIGHT - 1) {
+                         wTopBlock = rawData[wIdx + 1];
+                    } else {
+                         wTopBlock = upData ? upData->getBlock(x - 1, 0, z) : Blocks::AIR;
+                    }
+                    
+                    neighbor.init(wBlock, wTopBlock);
+                    if (shouldRenderFace(neighbor, false)) maskA[z][y] = blockId;
+                }
+
+                // --- East Neighbor (X+1) ---
+                // Neighbor index = idx + strideX
+                {
+                    int eIdx = idx + strideX;
+                    uint8_t eBlock = rawData[eIdx];
+                    
+                    uint8_t eTopBlock;
+                    if (y < CHUNK_HEIGHT - 1) {
+                         eTopBlock = rawData[eIdx + 1];
+                    } else {
+                         eTopBlock = upData ? upData->getBlock(x + 1, 0, z) : Blocks::AIR;
+                    }
+                    
+                    neighbor.init(eBlock, eTopBlock);
+                    if (shouldRenderFace(neighbor, false)) maskB[z][y] = blockId;
+                }
+            }
+        }
+
+        greedyMergeWestFaces(x, maskA, processedSide, currentVertex);
         memset(processedSide, 0, sizeof(bool) * CHUNK_WIDTH * CHUNK_HEIGHT);
         greedyMergeEastFaces(x, maskB, processedSide, currentVertex);
     }
+
+    // 3. East Boundary (X=31)
+    handleBoundaryX(CHUNK_WIDTH - 1);
 }
 
 void Chunk::greedyMergeNorthFaces(int z, uint16_t maskA[][CHUNK_HEIGHT],
@@ -402,91 +576,157 @@ void Chunk::greedyMergeEastFaces(int x, uint16_t maskB[][CHUNK_HEIGHT],
 void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* currentLiquidVertex,
                                   unsigned int* currentBillboardVertex) {
     NeighborData neighbor{};
+    
+    auto localData = chunkData;
+    if (!localData) return;
+
+    const uint8_t* rawData = localData->data;
+    const int strideZ = CHUNK_HEIGHT;
+    const int strideX = CHUNK_WIDTH * CHUNK_HEIGHT;
+
+    auto processSpecialBlock = [&](int x, int y, int z, int idx) {
+        uint8_t blockId = rawData[idx];
+        if (blockId == 0) return;
+
+        int subChunkIndex = y / SUBCHUNK_HEIGHT;
+        const Block *block = &Blocks::blocks[blockId];
+
+        // Cache top block data
+        // Determine top block ID efficiently
+        uint8_t topBlockId;
+        if (y < CHUNK_HEIGHT - 1) {
+            topBlockId = rawData[idx + 1];
+        } else {
+            topBlockId = upData ? upData->getBlock(x, 0, z) : Blocks::AIR;
+        }
+        
+        const Block *topBlockType = &Blocks::blocks[topBlockId];
+        char waterTopValue = (topBlockType->blockType == Block::TRANSPARENT ||
+                              topBlockType->blockType == Block::SOLID)
+                                 ? 1
+                                 : 0;
+
+        // Handle billboards
+        if (block->blockType == Block::BILLBOARD) {
+            generateBillboardFaces(x, y, z, block, currentBillboardVertex[subChunkIndex], subChunkIndex);
+            return;
+        }
+
+        // Skip Solids/Leaves (handled by greedy meshing)
+        if (block->blockType == Block::SOLID || block->blockType == Block::LEAVES) {
+            return;
+        }
+
+        bool isBlockLiquid = (block->blockType == Block::LIQUID);
+
+        // --- Neighbor Checks ---
+        
+        // Helper inline for neighbor
+        auto checkNeighbor = [&](uint8_t nBlockId, uint8_t nTopBlockId) {
+             neighbor.init(nBlockId, nTopBlockId);
+        };
+        
+        // 1. NORTH (Z-1)
+        if (z > 0) { // Internal Z
+             int nIdx = idx - strideZ;
+             uint8_t nBlock = rawData[nIdx];
+             uint8_t nTop = (y < CHUNK_HEIGHT - 1) ? rawData[nIdx + 1] : (upData ? upData->getBlock(x, 0, z-1) : Blocks::AIR);
+             checkNeighbor(nBlock, nTop);
+        } else { // Boundary Z
+             fetchNorthNeighbor(neighbor, x, y, z, localData, northData, upData);
+        }
+        
+        if (shouldRenderFace(neighbor, isBlockLiquid)) {
+            if (isBlockLiquid) {
+                generateLiquidFaces(x, y, z, NORTH, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+            } else {
+                generateWorldFaces(x, y, z, NORTH, block, currentVertex[subChunkIndex], subChunkIndex);
+            }
+        }
+
+        // 2. SOUTH (Z+1)
+        if (z < CHUNK_WIDTH - 1) {
+             int sIdx = idx + strideZ;
+             uint8_t sBlock = rawData[sIdx];
+             uint8_t sTop = (y < CHUNK_HEIGHT - 1) ? rawData[sIdx + 1] : (upData ? upData->getBlock(x, 0, z+1) : Blocks::AIR);
+             checkNeighbor(sBlock, sTop);
+        } else {
+             fetchSouthNeighbor(neighbor, x, y, z, localData, southData, upData);
+        }
+
+        if (shouldRenderFace(neighbor, isBlockLiquid)) {
+            if (isBlockLiquid) {
+                generateLiquidFaces(x, y, z, SOUTH, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+            } else {
+                generateWorldFaces(x, y, z, SOUTH, block, currentVertex[subChunkIndex], subChunkIndex);
+            }
+        }
+
+        // 3. WEST (X-1)
+        if (x > 0) {
+             int wIdx = idx - strideX;
+             uint8_t wBlock = rawData[wIdx];
+             uint8_t wTop = (y < CHUNK_HEIGHT - 1) ? rawData[wIdx + 1] : (upData ? upData->getBlock(x-1, 0, z) : Blocks::AIR);
+             checkNeighbor(wBlock, wTop);
+        } else {
+             fetchWestNeighbor(neighbor, x, y, z, localData, westData, upData);
+        }
+
+        if (shouldRenderFace(neighbor, isBlockLiquid)) {
+            if (isBlockLiquid) {
+                generateLiquidFaces(x, y, z, WEST, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+            } else {
+                generateWorldFaces(x, y, z, WEST, block, currentVertex[subChunkIndex], subChunkIndex);
+            }
+        }
+
+        // 4. EAST (X+1)
+        if (x < CHUNK_WIDTH - 1) {
+             int eIdx = idx + strideX;
+             uint8_t eBlock = rawData[eIdx];
+             uint8_t eTop = (y < CHUNK_HEIGHT - 1) ? rawData[eIdx + 1] : (upData ? upData->getBlock(x+1, 0, z) : Blocks::AIR);
+             checkNeighbor(eBlock, eTop);
+        } else {
+             fetchEastNeighbor(neighbor, x, y, z, localData, eastData, upData);
+        }
+
+        if (shouldRenderFace(neighbor, isBlockLiquid)) {
+            if (isBlockLiquid) {
+                generateLiquidFaces(x, y, z, EAST, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+            } else {
+                generateWorldFaces(x, y, z, EAST, block, currentVertex[subChunkIndex], subChunkIndex);
+            }
+        }
+
+        // Liquid TOP faces (not greedy meshed)
+        if (isBlockLiquid && topBlockType->blockType != Block::LIQUID) {
+            generateLiquidFaces(x, y, z, TOP, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+        }
+
+        // Liquid BOTTOM faces
+        if (isBlockLiquid) {
+            uint8_t bottomBlockId;
+            if (y > 0) {
+                bottomBlockId = rawData[idx - 1];
+            } else {
+                bottomBlockId = downData ? downData->getBlock(x, CHUNK_HEIGHT - 1, z) : Blocks::AIR;
+            }
+            
+            const Block *bottomBlockType = &Blocks::blocks[bottomBlockId];
+            if (bottomBlockType->blockType != Block::LIQUID && bottomBlockType->blockType != Block::SOLID) {
+                generateLiquidFaces(x, y, z, BOTTOM, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+            }
+        }
+    };
 
     for (int x = 0; x < CHUNK_WIDTH; x++) {
+        int xOffset = x * strideX;
         for (int z = 0; z < CHUNK_WIDTH; z++) {
+            int zOffset = z * strideZ;
+            int baseIdx = xOffset + zOffset;
+            
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
-                uint16_t blockId = chunkData->getBlock(x, y, z);
-                if (blockId == 0) continue;
-
-                int subChunkIndex = y / SUBCHUNK_HEIGHT;
-                const Block *block = &Blocks::blocks[blockId];
-
-                // Cache top block data
-                int topBlock = (y < CHUNK_HEIGHT - 1)
-                                   ? chunkData->getBlock(x, y + 1, z)
-                                   : (upData ? upData->getBlock(x, 0, z) : Blocks::AIR);
-                const Block *topBlockType = &Blocks::blocks[topBlock];
-                char waterTopValue = (topBlockType->blockType == Block::TRANSPARENT ||
-                                      topBlockType->blockType == Block::SOLID)
-                                         ? 1
-                                         : 0;
-
-                // Handle billboards
-                if (block->blockType == Block::BILLBOARD) {
-                    generateBillboardFaces(x, y, z, block, currentBillboardVertex[subChunkIndex], subChunkIndex);
-                    continue;
-                }
-
-                // Skip Solids/Leaves (handled by greedy meshing)
-                if (block->blockType == Block::SOLID || block->blockType == Block::LEAVES) {
-                    continue;
-                }
-
-                bool isBlockLiquid = (block->blockType == Block::LIQUID);
-
-                // Side faces - not greedy meshed (yet)
-                fetchNorthNeighbor(neighbor, x, y, z, chunkData, northData, upData);
-                if (shouldRenderFace(neighbor, isBlockLiquid)) {
-                    if (isBlockLiquid) {
-                        generateLiquidFaces(x, y, z, NORTH, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
-                    } else {
-                        generateWorldFaces(x, y, z, NORTH, block, currentVertex[subChunkIndex], subChunkIndex);
-                    }
-                }
-
-                fetchSouthNeighbor(neighbor, x, y, z, chunkData, southData, upData);
-                if (shouldRenderFace(neighbor, isBlockLiquid)) {
-                    if (isBlockLiquid) {
-                        generateLiquidFaces(x, y, z, SOUTH, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
-                    } else {
-                        generateWorldFaces(x, y, z, SOUTH, block, currentVertex[subChunkIndex], subChunkIndex);
-                    }
-                }
-
-                fetchWestNeighbor(neighbor, x, y, z, chunkData, westData, upData);
-                if (shouldRenderFace(neighbor, isBlockLiquid)) {
-                    if (isBlockLiquid) {
-                        generateLiquidFaces(x, y, z, WEST, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
-                    } else {
-                        generateWorldFaces(x, y, z, WEST, block, currentVertex[subChunkIndex], subChunkIndex);
-                    }
-                }
-
-                fetchEastNeighbor(neighbor, x, y, z, chunkData, eastData, upData);
-                if (shouldRenderFace(neighbor, isBlockLiquid)) {
-                    if (isBlockLiquid) {
-                        generateLiquidFaces(x, y, z, EAST, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
-                    } else {
-                        generateWorldFaces(x, y, z, EAST, block, currentVertex[subChunkIndex], subChunkIndex);
-                    }
-                }
-
-                // Liquid TOP faces (not greedy meshed)
-                if (isBlockLiquid && topBlockType->blockType != Block::LIQUID) {
-                    generateLiquidFaces(x, y, z, TOP, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
-                }
-
-                // Liquid BOTTOM faces
-                if (isBlockLiquid) {
-                    int bottomBlock = (y > 0)
-                                          ? chunkData->getBlock(x, y - 1, z)
-                                          : (downData ? downData->getBlock(x, CHUNK_HEIGHT - 1, z) : Blocks::AIR);
-                    const Block *bottomBlockType = &Blocks::blocks[bottomBlock];
-                    if (bottomBlockType->blockType != Block::LIQUID && bottomBlockType->blockType != Block::SOLID) {
-                        generateLiquidFaces(x, y, z, BOTTOM, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
-                    }
-                }
+                processSpecialBlock(x, y, z, baseIdx + y);
             }
         }
     }

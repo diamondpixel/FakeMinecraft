@@ -48,7 +48,7 @@ public:
 
     // Horizontal faces (TOP/BOTTOM) with greedy meshing
     void generateHorizontalFaces(unsigned int* currentVertex);
-    void buildHorizontalMasks(int y, uint16_t topMask[][CHUNK_WIDTH], uint16_t bottomMask[][CHUNK_WIDTH]) const;
+
     void greedyMergeTopFaces(int y, int subChunkIndex, uint16_t topMask[][CHUNK_WIDTH],
                             bool processed[][CHUNK_WIDTH], unsigned int* currentVertex);
     void greedyMergeBottomFaces(int y, int subChunkIndex, uint16_t bottomMask[][CHUNK_WIDTH],

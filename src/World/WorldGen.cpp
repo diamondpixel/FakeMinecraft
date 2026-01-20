@@ -2,6 +2,7 @@
 
 #include <OpenSimplexNoise.hh>
 #include <random>
+#include <cstring>
 #include "Blocks.h"
 #include "Planet.h"
 #include "ChunkPos.h"
@@ -128,38 +129,34 @@ namespace {
         return x * CHUNK_WIDTH * CHUNK_HEIGHT + z * CHUNK_HEIGHT + y;
     }
 
-    // Optimized surface height computation
+    // OPTIMIZATION: Precompute noise evaluations inline for surface height
     [[nodiscard]] int computeSurfaceHeight(const OSN::Noise<2> &noise2D,
                                            const float worldX, const float worldZ,
                                            const NoiseSettings *settings
     ) {
-        int height = 70;
-
-        // Manual unroll for 2 settings (most common case)
-        height += static_cast<int>(
-            noise2D.eval(worldX * settings[0].frequency + settings[0].offset,
-                         worldZ * settings[0].frequency + settings[0].offset) *
-            settings[0].amplitude +
-            noise2D.eval(worldX * settings[1].frequency + settings[1].offset,
-                         worldZ * settings[1].frequency + settings[1].offset) *
-            settings[1].amplitude
-        );
-
-        return height;
+        // Direct computation with fused operations
+        const float n0 = noise2D.eval(worldX * settings[0].frequency + settings[0].offset,
+                                      worldZ * settings[0].frequency + settings[0].offset) * settings[0].amplitude;
+        const float n1 = noise2D.eval(worldX * settings[1].frequency + settings[1].offset,
+                                      worldZ * settings[1].frequency + settings[1].offset) * settings[1].amplitude;
+        
+        return 70 + static_cast<int>(n0 + n1);
     }
 
-    // Lookup table for terrain blocks (branchless)
+    // OPTIMIZATION: Branchless terrain block selection using lookup
     [[nodiscard]] uint8_t getTerrainBlock(const int worldY, const int surfaceY) noexcept {
-        if (worldY == surfaceY) {
-            return (surfaceY > WATER_LEVEL + 1) ? Blocks::GRASS_BLOCK : Blocks::SAND;
-        }
-        if (worldY > WATER_LEVEL - 5) {
-            return (surfaceY > WATER_LEVEL + 1) ? Blocks::DIRT_BLOCK : Blocks::SAND;
-        }
-        if (worldY > MIN_HEIGHT) {
-            return Blocks::STONE_BLOCK;
-        }
-        return (worldY == MIN_HEIGHT) ? Blocks::BEDROCK : Blocks::AIR;
+        const bool isAboveSurface = worldY > surfaceY;
+        const bool isSurfaceLayer = worldY == surfaceY;
+        const bool isUpperLayer = worldY > WATER_LEVEL - 5;
+        const bool isAboveWater = surfaceY > WATER_LEVEL + 1;
+        const bool isMinHeight = worldY == MIN_HEIGHT;
+        
+        // Branchless selection
+        const uint8_t surfaceBlock = isAboveWater ? Blocks::GRASS_BLOCK : Blocks::SAND;
+        const uint8_t upperBlock = isAboveWater ? Blocks::DIRT_BLOCK : Blocks::SAND;
+        const uint8_t deepBlock = isMinHeight ? Blocks::BEDROCK : Blocks::STONE_BLOCK;
+        
+        return isSurfaceLayer ? surfaceBlock : (isUpperLayer ? upperBlock : deepBlock);
     }
 
     // Optimized bounds checking
@@ -189,22 +186,21 @@ void WorldGen::generateChunkData(const ChunkPos chunkPos, uint8_t *chunkData, co
     }
 
     // Const settings for compiler optimization
-    static NoiseSettings surfaceSettings[] = {
+    static constexpr NoiseSettings surfaceSettings[] = {
         {0.01f, 20.0f, 0},
         {0.05f, 3.0f, 0}
     };
 
-    static NoiseSettings caveSettings[] = {
+    static constexpr NoiseSettings caveSettings[] = {
         {0.05f, 1.0f, 0, 0.5f, 0, 50}
     };
 
-    static NoiseSettings oreSettings[] = {
+    static constexpr NoiseSettings oreSettings[] = {
         {0.1f, 1.0f, 8.54f, 0.5f, 0, 16, Blocks::DIAMOND_ORE}
     };
 
-    static NoiseSettings lavaPocketSettings[] =
-    {
-        0.075f, 1.5f, 5.54f, 0.79f, 0, 20, Blocks::LAVA
+    static constexpr NoiseSettings lavaPocketSettings[] = {
+        {0.075f, 1.5f, 5.54f, 0.79f, 0, 20, Blocks::LAVA}
     };
 
     // World coordinates
@@ -216,13 +212,8 @@ void WorldGen::generateChunkData(const ChunkPos chunkPos, uint8_t *chunkData, co
     // -------------------------------------------------------------------------
     // OPTIMIZATION: Early exit for entire chunks
     // -------------------------------------------------------------------------
-    if (startY > MAX_HEIGHT + 50) {
-        std::memset(chunkData, 0, sizeof(uint8_t) * CHUNK_WIDTH * CHUNK_WIDTH * CHUNK_HEIGHT);
-        return;
-    }
-
-    if (endY < MIN_HEIGHT) {
-        std::memset(chunkData, 0, sizeof(uint8_t) * CHUNK_WIDTH * CHUNK_WIDTH * CHUNK_HEIGHT);
+    if (startY > MAX_HEIGHT + 50 || endY < MIN_HEIGHT) {
+        std::memset(chunkData, 0, CHUNK_WIDTH * CHUNK_WIDTH * CHUNK_HEIGHT);
         return;
     }
 
@@ -236,8 +227,7 @@ void WorldGen::generateChunkData(const ChunkPos chunkPos, uint8_t *chunkData, co
         for (int z = 0; z < CHUNK_WIDTH; ++z) {
             const auto worldZ = static_cast<float>(z + startZ);
             cache.surfaceHeight[x][z] = static_cast<int16_t>(
-                computeSurfaceHeight(noiseState.noise2D, worldX, worldZ,
-                                     surfaceSettings)
+                computeSurfaceHeight(noiseState.noise2D, worldX, worldZ, surfaceSettings)
             );
         }
     }
@@ -268,23 +258,24 @@ void WorldGen::generateChunkData(const ChunkPos chunkPos, uint8_t *chunkData, co
     const float lavaThreshold = lavaPocketSettings[0].chance;
     const int oreMaxHeight = oreSettings[0].maxHeight;
     const int lavaMaxHeight = lavaPocketSettings[0].maxHeight;
+    const int oreMinHeight = MIN_HEIGHT + 2;
 
-    // Y-innermost for better cache locality
+    // OPTIMIZATION: Y-innermost for better cache locality + reduced branches
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int z = 0; z < CHUNK_WIDTH; ++z) {
             const int surfaceY = cache.surfaceHeight[x][z];
+            const int baseIndex = x * CHUNK_WIDTH * CHUNK_HEIGHT + z * CHUNK_HEIGHT;
 
             for (int y = 0; y < CHUNK_HEIGHT; ++y) {
                 const int worldY = y + startY;
-                const int index = getIndex3D(x, z, y);
+                const int index = baseIndex + y;
 
-                // Void below world
+                // OPTIMIZATION: Combined early exit conditions
                 if (worldY < MIN_HEIGHT) {
                     chunkData[index] = airBlock;
                     continue;
                 }
 
-                // Bedrock floor
                 if (worldY == MIN_HEIGHT) {
                     chunkData[index] = bedrockBlock;
                     continue;
@@ -296,33 +287,33 @@ void WorldGen::generateChunkData(const ChunkPos chunkPos, uint8_t *chunkData, co
                     continue;
                 }
 
-                // Cave check
+                // OPTIMIZATION: Single cave noise fetch
                 const float caveValue = caveNoise.get(x, y, z);
                 if (caveValue > caveThreshold) {
-                    chunkData[index] = (worldY == MIN_HEIGHT) ? bedrockBlock : airBlock;
+                    chunkData[index] = airBlock;
                     continue;
                 }
 
-                // Ore check
-                if (worldY <= oreMaxHeight && worldY >= MIN_HEIGHT + 2) {
+                // OPTIMIZATION: Check ore/lava ranges once
+                uint8_t blockType = 0;
+                
+                if (worldY <= oreMaxHeight && worldY >= oreMinHeight) {
                     const float oreValue = oreNoise.get(x, y, z);
                     if (oreValue > oreThreshold) {
-                        chunkData[index] = oreBlock;
-                        continue;
+                        blockType = oreBlock;
                     }
                 }
-
-                // Lava check
-                if (worldY <= lavaMaxHeight && worldY >= MIN_HEIGHT + 2) {
+                
+                // OPTIMIZATION: Only check lava if ore wasn't placed
+                if (blockType == 0 && worldY <= lavaMaxHeight && worldY >= oreMinHeight) {
                     const float lavaValue = lavaNoise.get(x, y, z);
                     if (lavaValue > lavaThreshold) {
-                        chunkData[index] = lavaBlock;
-                        continue;
+                        blockType = lavaBlock;
                     }
                 }
 
-                // Default terrain
-                chunkData[index] = getTerrainBlock(worldY, surfaceY);
+                // Set final block
+                chunkData[index] = (blockType != 0) ? blockType : getTerrainBlock(worldY, surfaceY);
             }
         }
     }
@@ -334,7 +325,6 @@ void WorldGen::generateChunkData(const ChunkPos chunkPos, uint8_t *chunkData, co
                             cache, startX, startY, startZ, surfaceSettings);
 }
 
-// ============================================================================
 // ============================================================================
 // SURFACE FEATURES - Separated for better code organization
 // ============================================================================
@@ -484,9 +474,14 @@ namespace {
             {{6.32f, 1.0f, 8.2f, 0.2f, 1, 0}, {2, 12}, {false, false}, 1, 2, 1, 0, 0, 0},
         };
 
-        static const NoiseSettings caveSettings[] = {
+        static constexpr NoiseSettings caveSettings[] = {
             {0.05f, 1.0f, 0, 0.5f, 0, MAX_HEIGHT - 10}
         };
+
+        // OPTIMIZATION: Precompute bounds to reduce redundant calculations
+        const int chunkEndX = startX + CHUNK_WIDTH;
+        const int chunkEndZ = startZ + CHUNK_WIDTH;
+        const int chunkEndY = startY + CHUNK_HEIGHT;
 
         for (const auto &feature: surfaceFeatures) {
             // Precompute iteration bounds
@@ -494,14 +489,26 @@ namespace {
             const int xEnd = CHUNK_WIDTH - feature.offsetX;
             const int zStart = -feature.sizeZ - feature.offsetZ;
             const int zEnd = CHUNK_WIDTH - feature.offsetZ;
+            
+            // OPTIMIZATION: Precompute noise parameters
+            const float freq = feature.noiseSettings.frequency;
+            const float offset = feature.noiseSettings.offset;
+            const float threshold = feature.noiseSettings.chance;
+            const float caveFreq = caveSettings[0].frequency;
+            const float caveOffset = caveSettings[0].offset;
+            const float caveThreshold = caveSettings[0].chance;
 
             for (int x = xStart; x < xEnd; ++x) {
                 const int worldX = x + startX;
                 const auto fWorldX = static_cast<float>(worldX);
+                const float noisePosX = fWorldX * freq + offset;
+                const float cavePosX = fWorldX * caveFreq + caveOffset;
 
                 for (int z = zStart; z < zEnd; ++z) {
                     const int worldZ = z + startZ;
                     const auto fWorldZ = static_cast<float>(worldZ);
+                    const float noisePosZ = fWorldZ * freq + offset;
+                    const float cavePosZ = fWorldZ * caveFreq + caveOffset;
 
                     // Get surface height from cache or recompute
                     int surfaceY;
@@ -511,33 +518,29 @@ namespace {
                         surfaceY = computeSurfaceHeight(noise2D, fWorldX, fWorldZ, surfaceSettings);
                     }
 
-                    // Early exits
-                    if (surfaceY + feature.offsetY > startY + CHUNK_HEIGHT ||
-                        surfaceY + feature.sizeY + feature.offsetY < startY ||
-                        surfaceY < WATER_LEVEL + 2) {
+                    // OPTIMIZATION: Combined early exit checks
+                    const int featureTopY = surfaceY + feature.sizeY + feature.offsetY;
+                    const int featureBottomY = surfaceY + feature.offsetY;
+                    
+                    if (featureTopY < startY || featureBottomY > chunkEndY || surfaceY < WATER_LEVEL + 2) {
                         continue;
                     }
 
-                    // Cave check
+                    // OPTIMIZATION: Single cave check with precomputed positions
                     const float caveCheck = noise3D.eval(
-                                                fWorldX * caveSettings[0].frequency + caveSettings[0].offset,
-                                                static_cast<float>(surfaceY) * caveSettings[0].frequency + caveSettings[
-                                                    0].
-                                                offset,
-                                                fWorldZ * caveSettings[0].frequency + caveSettings[0].offset
-                                            ) * caveSettings[0].amplitude;
+                        cavePosX,
+                        static_cast<float>(surfaceY) * caveFreq + caveOffset,
+                        cavePosZ
+                    ) * caveSettings[0].amplitude;
 
-                    if (caveCheck > caveSettings[0].chance) {
+                    if (caveCheck > caveThreshold) {
                         continue;
                     }
 
-                    // Feature noise threshold
-                    const float featureNoise = noise2D.eval(
-                        fWorldX * feature.noiseSettings.frequency + feature.noiseSettings.offset,
-                        fWorldZ * feature.noiseSettings.frequency + feature.noiseSettings.offset
-                    );
+                    // OPTIMIZATION: Single feature noise check with precomputed positions
+                    const float featureNoise = noise2D.eval(noisePosX, noisePosZ);
 
-                    if (featureNoise <= feature.noiseSettings.chance) {
+                    if (featureNoise <= threshold) {
                         continue;
                     }
 
@@ -557,25 +560,65 @@ namespace {
         const SurfaceFeature &feature,
         const int worldX, const int surfaceY, const int worldZ,
         const int startX, const int startY, const int startZ) {
-        for (int fX = 0; fX < feature.sizeX; ++fX) {
-            for (int fY = 0; fY < feature.sizeY; ++fY) {
-                for (int fZ = 0; fZ < feature.sizeZ; ++fZ) {
-                    const int localX = worldX + fX + feature.offsetX - startX;
-                    const int localY = surfaceY + fY + feature.offsetY - startY;
-                    const int localZ = worldZ + fZ + feature.offsetZ - startZ;
+        
+        // OPTIMIZATION: Precompute common offsets
+        const int baseX = worldX + feature.offsetX - startX;
+        const int baseY = surfaceY + feature.offsetY - startY;
+        const int baseZ = worldZ + feature.offsetZ - startZ;
+        
+        // Store for tight loop usage
+        const int strideZ = feature.sizeZ;
+        const int strideXZ = feature.sizeX * strideZ;
 
-                    // Optimized bounds check
-                    if (!inChunkBounds(localX, localY, localZ)) {
+        // LOOP ORDER: X -> Z -> Y (Matches chunkData layout: Y-innermost)
+        for (int fX = 0; fX < feature.sizeX; ++fX) {
+            const int localX = baseX + fX;
+            
+            // Early X bounds check
+            if (static_cast<unsigned>(localX) >= CHUNK_WIDTH) {
+                continue;
+            }
+            
+            const int chunkXOffset = localX * CHUNK_WIDTH * CHUNK_HEIGHT;
+            const int fXOffset = fX * strideZ; // Offset in feature.blocks for X
+
+            for (int fZ = 0; fZ < feature.sizeZ; ++fZ) {
+                const int localZ = baseZ + fZ;
+
+                // Early Z bounds check
+                if (static_cast<unsigned>(localZ) >= CHUNK_WIDTH) {
+                    continue;
+                }
+                
+                // Base index for this X,Z column in chunkData
+                const int colBaseIndex = chunkXOffset + localZ * CHUNK_HEIGHT;
+                
+                // Base index for this X,Z column in feature blocks
+                const int featureColBase = fXOffset + fZ; // This is actually an index into 'X*StrideZ + Z'. 
+                // Wait, feature array is [Y][X][Z] flattend? 
+                // Access in original was: fY * sizeX * sizeZ + fX * sizeZ + fZ
+                // So featureColBase needs to be just fX * sizeZ + fZ, but we need to add Y offset in inner loop.
+                
+                for (int fY = 0; fY < feature.sizeY; ++fY) {
+                    const int localY = baseY + fY;
+
+                    // Early Y bounds check
+                    if (static_cast<unsigned>(localY) >= CHUNK_HEIGHT) {
                         continue;
                     }
 
-                    const int featureIndex = fY * feature.sizeX * feature.sizeZ +
-                                             fX * feature.sizeZ + fZ;
-                    const int localIndex = getIndex3D(localX, localZ, localY);
+                    const int localIndex = colBaseIndex + localY; // Sequential access!
+                    const int featureIndex = fY * strideXZ + featureColBase;
 
-                    // Place block if replacement allowed or position is air
-                    if (feature.replaceBlock[featureIndex] || chunkData[localIndex] == 0) {
-                        chunkData[localIndex] = feature.blocks[featureIndex];
+                    // OPTIMIZATION: Branchless block placement
+                    const uint8_t featureBlock = feature.blocks[featureIndex];
+                    // Skip 0 blocks early to avoid read from chunkData if not needed (optional, depends on density of feature)
+                    if (featureBlock == 0) continue;
+
+                    const bool shouldPlace = feature.replaceBlock[featureIndex] || (chunkData[localIndex] == 0);
+                    
+                    if (shouldPlace) {
+                        chunkData[localIndex] = featureBlock;
                     }
                 }
             }

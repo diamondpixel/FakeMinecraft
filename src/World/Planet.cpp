@@ -50,7 +50,6 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
             // Clear all queues efficiently
             chunkQueue = {};
             chunkDataQueue = {};
-            chunkDataDeleteQueue = {};
             regenQueue = {};
         }
         return;
@@ -93,7 +92,6 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
         ++numChunks;
 
         if (isOutOfRenderDistance(pos)) {
-            queueNeighborDeletion(pos);
             toDeleteList.push_back(pos);
             continue;
         }
@@ -316,24 +314,10 @@ inline std::pair<glm::vec3, glm::vec3> Planet::getChunkBounds(const ChunkPos &po
     };
 }
 
-inline void Planet::queueNeighborDeletion(const ChunkPos &pos) {
-    for (const auto &offset: NEIGHBOR_OFFSETS) {
-        chunkDataDeleteQueue.emplace(pos.x + offset[0], pos.y + offset[1], pos.z + offset[2]);
-    }
-}
 
-inline bool Planet::isChunkDataInUse(const ChunkPos &pos) const {
-    // Check if position itself is in use
-    if (chunks.find(pos) != chunks.end()) return true;
 
-    // Check neighbors
-    for (const auto &offset: NEIGHBOR_OFFSETS) {
-        if (chunks.find({pos.x + offset[0], pos.y + offset[1], pos.z + offset[2]}) != chunks.end()) {
-            return true;
-        }
-    }
-    return false;
-}
+
+
 
 void Planet::updateFrustum(const glm::mat4 &frustumVP, const glm::mat4 &renderingVP) {
     // Store RENDERING perspective for occlusion queries (matches depth buffer)
@@ -414,7 +398,9 @@ void Planet::cleanupUnusedChunkData() {
     toRemove.clear();
 
     for (const auto &[pos, data]: chunkData) {
-        if (!isChunkDataInUse(pos)) {
+        // OPTIMIZATION: Check reference count instead of strictly checking usage
+        // 1 ref = held by chunkData map ONLY (not used by any chunk or neighbor)
+        if (data.use_count() == 1) {
             toRemove.push_back(pos);
         }
     }

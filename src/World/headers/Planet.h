@@ -40,10 +40,7 @@ private:
     // Helper methods for improved organization and performance
     [[nodiscard]] bool isOutOfRenderDistance(const ChunkPos& pos) const;
     static std::pair<glm::vec3, glm::vec3> getChunkBounds(const ChunkPos& pos);
-    void queueNeighborDeletion(const ChunkPos& pos);
-
     void cleanupUnusedChunkData();
-    [[nodiscard]] bool isChunkDataInUse(const ChunkPos& pos) const;
 
     void updateChunkQueue();
     void buildChunkQueue();
@@ -72,7 +69,6 @@ private:
     std::queue<ChunkPos> chunkQueue;
     std::queue<ChunkPos> chunkDataQueue;
     std::queue<ChunkPos> regenQueue;
-    std::queue<ChunkPos> chunkDataDeleteQueue;
     unsigned int chunksLoading = 0;
     int lastCamX = -100, lastCamY = -100, lastCamZ = -100;
     int camChunkX = -100, camChunkY = -100, camChunkZ = -100;

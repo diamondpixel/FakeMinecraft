@@ -103,19 +103,29 @@ void Chunk::uploadMesh() {
         cullingExtents = glm::vec3(CHUNK_WIDTH * 0.5f, CHUNK_HEIGHT * 0.5f, CHUNK_WIDTH * 0.5f);
     }
 
+    // --- Persistent Staging Buffers ---
+    static thread_local std::vector<WorldVertex> stagingWorldVerts;
+    static thread_local std::vector<unsigned int> stagingWorldInds;
+    
+    static thread_local std::vector<BillboardVertex> stagingBillboardVerts;
+    static thread_local std::vector<unsigned int> stagingBillboardInds;
+    
+    static thread_local std::vector<FluidVertex> stagingWaterVerts;
+    static thread_local std::vector<unsigned int> stagingWaterInds;
+
     // Merge and upload WORLD geometry
     mergedWorldTriangles = totalWorldInds;
     if (totalWorldVerts > 0) {
-        std::vector<WorldVertex> mergedVerts;
-        std::vector<unsigned int> mergedInds;
-        mergedVerts.reserve(totalWorldVerts);
-        mergedInds.reserve(totalWorldInds);
+        stagingWorldVerts.clear();
+        stagingWorldInds.clear();
+        stagingWorldVerts.reserve(totalWorldVerts);
+        stagingWorldInds.reserve(totalWorldInds);
         
         unsigned int vertexOffset = 0;
         for (int i = 0; i < NUM_SUBCHUNKS; ++i) {
-            mergedVerts.insert(mergedVerts.end(), worldVertices[i].begin(), worldVertices[i].end());
+            stagingWorldVerts.insert(stagingWorldVerts.end(), worldVertices[i].begin(), worldVertices[i].end());
             for (unsigned int idx : worldIndices[i]) {
-                mergedInds.push_back(idx + vertexOffset);
+                stagingWorldInds.push_back(idx + vertexOffset);
             }
             vertexOffset += worldVertices[i].size();
             subChunks[i].numTrianglesWorld = worldIndices[i].size();
@@ -126,25 +136,25 @@ void Chunk::uploadMesh() {
         glGenBuffers(1, &mergedWorldEBO);
         glBindVertexArray(mergedWorldVAO);
         glBindBuffer(GL_ARRAY_BUFFER, mergedWorldVBO);
-        glBufferData(GL_ARRAY_BUFFER, mergedVerts.size() * sizeof(WorldVertex), mergedVerts.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, stagingWorldVerts.size() * sizeof(WorldVertex), stagingWorldVerts.data(), GL_STATIC_DRAW);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mergedWorldEBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, mergedInds.size() * sizeof(unsigned int), mergedInds.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, stagingWorldInds.size() * sizeof(unsigned int), stagingWorldInds.data(), GL_STATIC_DRAW);
         setupWorldVAO();
     }
 
     // Merge and upload BILLBOARD geometry
     mergedBillboardTriangles = totalBillboardInds;
     if (totalBillboardVerts > 0) {
-        std::vector<BillboardVertex> mergedVerts;
-        std::vector<unsigned int> mergedInds;
-        mergedVerts.reserve(totalBillboardVerts);
-        mergedInds.reserve(totalBillboardInds);
+        stagingBillboardVerts.clear();
+        stagingBillboardInds.clear();
+        stagingBillboardVerts.reserve(totalBillboardVerts);
+        stagingBillboardInds.reserve(totalBillboardInds);
         
         unsigned int vertexOffset = 0;
         for (int i = 0; i < NUM_SUBCHUNKS; ++i) {
-            mergedVerts.insert(mergedVerts.end(), billboardVertices[i].begin(), billboardVertices[i].end());
+            stagingBillboardVerts.insert(stagingBillboardVerts.end(), billboardVertices[i].begin(), billboardVertices[i].end());
             for (unsigned int idx : billboardIndices[i]) {
-                mergedInds.push_back(idx + vertexOffset);
+                stagingBillboardInds.push_back(idx + vertexOffset);
             }
             vertexOffset += billboardVertices[i].size();
             subChunks[i].numTrianglesBillboard = billboardIndices[i].size();
@@ -155,25 +165,25 @@ void Chunk::uploadMesh() {
         glGenBuffers(1, &mergedBillboardEBO);
         glBindVertexArray(mergedBillboardVAO);
         glBindBuffer(GL_ARRAY_BUFFER, mergedBillboardVBO);
-        glBufferData(GL_ARRAY_BUFFER, mergedVerts.size() * sizeof(BillboardVertex), mergedVerts.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, stagingBillboardVerts.size() * sizeof(BillboardVertex), stagingBillboardVerts.data(), GL_STATIC_DRAW);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mergedBillboardEBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, mergedInds.size() * sizeof(unsigned int), mergedInds.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, stagingBillboardInds.size() * sizeof(unsigned int), stagingBillboardInds.data(), GL_STATIC_DRAW);
         setupBillboardVAO();
     }
 
     // Merge and upload WATER geometry
     mergedWaterTriangles = totalWaterInds;
     if (totalWaterVerts > 0) {
-        std::vector<FluidVertex> mergedVerts;
-        std::vector<unsigned int> mergedInds;
-        mergedVerts.reserve(totalWaterVerts);
-        mergedInds.reserve(totalWaterInds);
+        stagingWaterVerts.clear();
+        stagingWaterInds.clear();
+        stagingWaterVerts.reserve(totalWaterVerts);
+        stagingWaterInds.reserve(totalWaterInds);
         
         unsigned int vertexOffset = 0;
         for (int i = 0; i < NUM_SUBCHUNKS; ++i) {
-            mergedVerts.insert(mergedVerts.end(), liquidVertices[i].begin(), liquidVertices[i].end());
+            stagingWaterVerts.insert(stagingWaterVerts.end(), liquidVertices[i].begin(), liquidVertices[i].end());
             for (unsigned int idx : liquidIndices[i]) {
-                mergedInds.push_back(idx + vertexOffset);
+                stagingWaterInds.push_back(idx + vertexOffset);
             }
             vertexOffset += liquidVertices[i].size();
             subChunks[i].numTrianglesLiquid = liquidIndices[i].size();
@@ -184,9 +194,9 @@ void Chunk::uploadMesh() {
         glGenBuffers(1, &mergedWaterEBO);
         glBindVertexArray(mergedWaterVAO);
         glBindBuffer(GL_ARRAY_BUFFER, mergedWaterVBO);
-        glBufferData(GL_ARRAY_BUFFER, mergedVerts.size() * sizeof(FluidVertex), mergedVerts.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, stagingWaterVerts.size() * sizeof(FluidVertex), stagingWaterVerts.data(), GL_STATIC_DRAW);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mergedWaterEBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, mergedInds.size() * sizeof(unsigned int), mergedInds.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, stagingWaterInds.size() * sizeof(unsigned int), stagingWaterInds.data(), GL_STATIC_DRAW);
         setupWaterVAO();
     }
 
