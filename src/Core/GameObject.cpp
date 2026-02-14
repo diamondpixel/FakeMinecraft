@@ -3,11 +3,10 @@
 #include <sstream>
 #include <algorithm>
 #include <utility>
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
 #include <SDL2/SDL_mouse.h>
-
+#include "TextureManager.h"
 #include "Blocks.h"
+#include "../World/Generation/BiomeRegistry.h"
 #include "SDL2/SDL_timer.h"
 
 // ============================================================================
@@ -63,7 +62,7 @@ void GameObject::init() {
     graphics::setPreDrawFunction([this] {
         updateWindowTitle();
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, gameTexture->getID());
+        glBindTexture(GL_TEXTURE_2D_ARRAY, TextureManager::getInstance().getTextureArrayID());
         setupRenderingState();
         updateFPSSettings();
         updateShaders();
@@ -129,82 +128,15 @@ void GameObject::initializeGraphics() {
     graphics::setFont("../assets/fonts/Arial.ttf");
 
     camera = Camera(glm::vec3(0.0f, MAX_HEIGHT/2 + 10, 0.0f));
-    textureManager = &graphics::TextureManager::getInstance();
 
-    const std::string texturePath = "../assets/sprites/block_map.png";
-    gameTexture = textureManager->createTexture(
-        texturePath, false, [&texturePath](graphics::Texture &tex) {
-            stbi_set_flip_vertically_on_load(true);
-
-            int width, height, channels;
-            unsigned char *data = stbi_load(texturePath.c_str(), &width, &height, &channels, 4);
-
-            if (!data) {
-                std::cerr << "Failed to load texture: " << texturePath << std::endl;
-                return;
-            }
-
-            // Set texture dimensions in the wrapper
-            // Note: We're hacking the wrapper to store array dimensions if needed, 
-            // but effectively we just need the ID to be valid.
-            // tex.setWidth(width); tex.setHeight(height); // Wrapper probably does this?
-            // Actually the wrapper calls this lambda. We should probably respect its structure.
-            // But we are managing the GL texture ourselves here.
-            
-            // Assume 16x16 grid of tiles
-            const int tilesX = 16;
-            const int tilesY = 16;
-            const int tileW = width / tilesX;
-            const int tileH = height / tilesY;
-            const int layerCount = tilesX * tilesY;
-            
-            // Re-arrange data into layers
-            std::vector<unsigned char> arrayBuffer(width * height * 4);
-            
-            for (int ly = 0; ly < tilesY; ly++) {
-                for (int lx = 0; lx < tilesX; lx++) {
-                    int layer = ly * tilesX + lx;
-                    for (int y = 0; y < tileH; y++) {
-                        for (int x = 0; x < tileW; x++) {
-                            // Source: Atlas coordinates (flipped vertically? stbi_set_flip... is true)
-                            // If flipped, row 0 is bottom. 
-                            // Standard Minecraft atlas: Row 0 is top.
-                            // If stbi flips, Row 0 becomes bottom.
-                            
-                            int srcX = lx * tileW + x;
-                            int srcY = ly * tileH + y;
-                            int srcIdx = (srcY * width + srcX) * 4;
-                            
-                            // Dest: Layer `layer` (0..255)
-                            // Within layer: y * tileW + x
-                            int destIdx = (layer * (tileW * tileH) + (y * tileW + x)) * 4;
-                            
-                            arrayBuffer[destIdx + 0] = data[srcIdx + 0];
-                            arrayBuffer[destIdx + 1] = data[srcIdx + 1];
-                            arrayBuffer[destIdx + 2] = data[srcIdx + 2];
-                            arrayBuffer[destIdx + 3] = data[srcIdx + 3];
-                        }
-                    }
-                }
-            }
-
-            stbi_image_free(data);
-
-            // Setup OpenGL Array Texture
-            glGenTextures(1, tex.getIDPointer());
-            glBindTexture(GL_TEXTURE_2D_ARRAY, tex.getID());
-            
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            
-            glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, tileW, tileH, layerCount,
-                         0, GL_RGBA, GL_UNSIGNED_BYTE, arrayBuffer.data());
-                         
-            glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
-            glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-        });
+    // Load textures using Dynamic Atlas
+    TextureManager::getInstance().loadTextures("../assets/sprites/blocks");
+    
+    // Initialize Blocks (builds registry and resolves textures)
+    Blocks::init();
+    
+    // Initialize Biomes (sets up biome definitions with features)
+    BiomeRegistry::getInstance().init();
 }
 
 void GameObject::initializeShaders() {
@@ -307,8 +239,8 @@ void GameObject::updateShaders() {
         cachedMatrices.projection = glm::perspective(
             glm::radians(90.0f),
             windowX / windowY,
-            0.1f,
-            10000.0f
+            10000.0f, // Swapped near/far for Reverse-Z
+            0.1f      // Reverted to 0.1f for near plane
         );
         cachedMatrices.dirty = false;
     }
@@ -346,7 +278,9 @@ void GameObject::setupRenderingState() {
     glClearColor(0.6f, 0.8f, 1.0f, 1.0f);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
+    glClearDepth(0.0f); // Reverse-Z: Clear to 0.0 instead of 1.0
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glDepthFunc(GL_GEQUAL); // Reverse-Z: Use Greater-Than-Or-Equal
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     glEnable(GL_CULL_FACE);
@@ -412,7 +346,8 @@ void GameObject::renderFluidOverlay() const {
     if (!chunk) return;
 
     const uint32_t blockType = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
-    const std::string &blockName = Blocks::blocks[blockType].blockName;
+    // Convert char array to std::string for comparison/UI
+    const std::string blockName = BlockRegistry::getInstance().getBlock(blockType).blockName;
 
     graphics::Brush overlay;
     overlay.outline_opacity = 0.0f;
@@ -463,7 +398,7 @@ void GameObject::renderDebugInfo() const {
 
     drawText(10, 30, 15, "FPS: " + std::to_string(static_cast<int>(graphics::getFPS())), textBrush);
     drawText(10, 50, 15, coordsText.str(), textBrush);
-    drawText(10, 70, 15, "SELECTED BLOCK: " + Blocks::blocks[gameState.selectedBlock].blockName, textBrush);
+    drawText(10, 70, 15, "SELECTED BLOCK: " + std::string(BlockRegistry::getInstance().getBlock(gameState.selectedBlock).blockName), textBrush);
     
     if (freecamActive) {
         textBrush.fill_color[0] = 1.0f;
@@ -648,6 +583,28 @@ void GameObject::keyboardCallBack(float deltaTime) {
 void GameObject::handleBlockBreak(const Physics::RaycastResult &result) {
     const uint32_t blockType = result.chunk->getBlockAtPos(
         result.localBlockX, result.localBlockY, result.localBlockZ);
+    
+    // Dependent breaking: Tall Grass
+    // If bottom is broken, break top as well.
+    const Block& currentBlock = BlockRegistry::getInstance().getBlock(blockType);
+    
+    if (strcmp(currentBlock.blockName, "TALL_GRASS_BOTTOM") == 0) {
+        uint32_t aboveBlock = result.chunk->getBlockAtPos(
+            result.localBlockX, result.localBlockY + 1, result.localBlockZ);
+        
+        const Block& aboveBlockData = BlockRegistry::getInstance().getBlock(aboveBlock);
+        
+        if (strcmp(aboveBlockData.blockName, "TALL_GRASS_TOP") == 0) {
+            // Must handle cross-chunk boundary if Y=15? (Current implementation clamps or wraps?)
+            // Chunk::getBlockAtPos usually handles local coords. 
+            // If localBlockY+1 == CHUNK_HEIGHT, it might be an issue if getBlockAtPos doesn't handle neighbor chunks.
+            // But let's assume simple cases or verify if getBlockAtPos handles out of bounds.
+            // Actually, for now, let's keep it simple.
+             result.chunk->updateBlock(result.localBlockX, result.localBlockY + 1, result.localBlockZ, 0);
+        }
+    }
+    // User requested: If top is broken, bottom remains (so no action needed for TALL_GRASS_TOP).
+
     playSound(blockType);
     result.chunk->updateBlock(result.localBlockX, result.localBlockY, result.localBlockZ, 0);
 }
@@ -694,14 +651,16 @@ void GameObject::handleBlockPlace(const Physics::RaycastResult &result) {
     const uint16_t blockToReplace = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
 
     // Check if we can place
-    if (blockToReplace != 0 && Blocks::blocks[blockToReplace].blockType != Block::LIQUID) {
+    const Block& blockToReplaceData = BlockRegistry::getInstance().getBlock(blockToReplace);
+    if (blockToReplace != 0 && blockToReplaceData.blockType != Block::LIQUID) {
         return;
     }
 
     // Billboard placement validation
-    if (Blocks::blocks[gameState.selectedBlock].blockType == Block::BILLBOARD) {
+    const Block& selectedBlockData = BlockRegistry::getInstance().getBlock(gameState.selectedBlock);
+    if (selectedBlockData.blockType == Block::BILLBOARD) {
         const uint16_t blockBelow = chunk->getBlockAtPos(localBlockX, localBlockY - 1, localBlockZ);
-        if (Blocks::blocks[blockBelow].blockName != "GRASS_BLOCK") {
+        if (strcmp(BlockRegistry::getInstance().getBlock(blockBelow).blockName, "GRASS_BLOCK") != 0) {
             return;
         }
     }

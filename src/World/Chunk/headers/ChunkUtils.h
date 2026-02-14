@@ -17,8 +17,8 @@ struct NeighborData {
     void init(int const blk, int const topBlk) {
         block = blk;
         topBlock = topBlk;
-        blockType = &Blocks::blocks[block];
-        topBlockType = &Blocks::blocks[topBlock];
+        blockType = &BlockRegistry::getInstance().getBlock(block);
+        topBlockType = &BlockRegistry::getInstance().getBlock(topBlock);
         isLiquid = (blockType->blockType == Block::LIQUID);
     }
 };

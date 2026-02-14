@@ -36,7 +36,7 @@ Physics::RaycastResult Physics::raycast(const glm::vec3 startPos, const glm::vec
 		int blockZ = resultPos.z >= 0 ? static_cast<int>(resultPos.z) : static_cast<int>(resultPos.z) - 1;
 
 		// Return true if it hit a block
-		if (block != 0 && Blocks::blocks[block].blockType != Block::LIQUID)
+		if (block != 0 && BlockRegistry::getInstance().getBlock(block).blockType != Block::LIQUID)
 			return { true, resultPos, chunk,
 			blockX, blockY, blockZ,
 			localBlockX, localBlockY, localBlockZ};

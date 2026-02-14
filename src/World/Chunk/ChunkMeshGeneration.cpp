@@ -71,7 +71,7 @@ void Chunk::generateHorizontalFaces(unsigned int* currentVertex) {
                  uint8_t blockId = rawData[idx];
 
                  if (blockId == 0) continue;
-                 const Block* block = &Blocks::blocks[blockId];
+                const Block* block = &BlockRegistry::getInstance().getBlock(blockId);
                  
                  // Skip non-solid blocks for greedy meshing
                  if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) {
@@ -86,7 +86,7 @@ void Chunk::generateHorizontalFaces(unsigned int* currentVertex) {
                      topBlockId = upData ? upData->getBlock(x, 0, z) : Blocks::AIR;
                  }
                  
-                 const Block* topBlockType = &Blocks::blocks[topBlockId];
+                 const Block* topBlockType = &BlockRegistry::getInstance().getBlock(topBlockId);
                  if (topBlockType->blockType == Block::LEAVES ||
                      topBlockType->blockType == Block::TRANSPARENT ||
                      topBlockType->blockType == Block::BILLBOARD ||
@@ -102,7 +102,7 @@ void Chunk::generateHorizontalFaces(unsigned int* currentVertex) {
                      bottomBlockId = downData ? downData->getBlock(x, CHUNK_HEIGHT - 1, z) : Blocks::AIR;
                  }
 
-                 const Block* bottomBlockType = &Blocks::blocks[bottomBlockId];
+                 const Block* bottomBlockType = &BlockRegistry::getInstance().getBlock(bottomBlockId);
                  if (bottomBlockType->blockType == Block::LEAVES ||
                      bottomBlockType->blockType == Block::TRANSPARENT ||
                      bottomBlockType->blockType == Block::BILLBOARD ||
@@ -252,7 +252,7 @@ void Chunk::generateZAxisFaces(unsigned int* currentVertex, uint16_t maskA[][CHU
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
                 uint16_t blockId = localData->getBlock(x, y, z);
                 if (blockId == 0) continue;
-                const Block* block = &Blocks::blocks[blockId];
+                const Block* block = &BlockRegistry::getInstance().getBlock(blockId);
                 if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) continue;
 
                 fetchNorthNeighbor(neighbor, x, y, z, localData, northData, upData);
@@ -295,7 +295,7 @@ void Chunk::generateZAxisFaces(unsigned int* currentVertex, uint16_t maskA[][CHU
                 // We know block is solid/leaves check, but let's defer that lookup if possible? 
                 // No, we need to know if we should cull self too.
                 // Optimizing: Only look up block type if ID > 0
-                const Block* block = &Blocks::blocks[blockId];
+                const Block* block = &BlockRegistry::getInstance().getBlock(blockId);
                 if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) continue;
 
                 // --- North Neighbor (Z-1) ---
@@ -369,7 +369,7 @@ void Chunk::generateXAxisFaces(unsigned int* currentVertex, uint16_t maskA[][CHU
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
                 uint16_t blockId = localData->getBlock(x, y, z);
                 if (blockId == 0) continue;
-                const Block* block = &Blocks::blocks[blockId];
+                const Block* block = &BlockRegistry::getInstance().getBlock(blockId);
                 if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) continue;
 
                 fetchWestNeighbor(neighbor, x, y, z, localData, westData, upData);
@@ -404,7 +404,7 @@ void Chunk::generateXAxisFaces(unsigned int* currentVertex, uint16_t maskA[][CHU
                 uint8_t blockId = rawData[idx];
 
                 if (blockId == 0) continue;
-                const Block* block = &Blocks::blocks[blockId];
+                const Block* block = &BlockRegistry::getInstance().getBlock(blockId);
                 if (block->blockType != Block::SOLID && block->blockType != Block::LEAVES) continue;
 
                 // --- West Neighbor (X-1) ---
@@ -589,7 +589,7 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
         if (blockId == 0) return;
 
         int subChunkIndex = y / SUBCHUNK_HEIGHT;
-        const Block *block = &Blocks::blocks[blockId];
+        const Block *block = &BlockRegistry::getInstance().getBlock(blockId);
 
         // Cache top block data
         // Determine top block ID efficiently
@@ -600,7 +600,7 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
             topBlockId = upData ? upData->getBlock(x, 0, z) : Blocks::AIR;
         }
         
-        const Block *topBlockType = &Blocks::blocks[topBlockId];
+        const Block *topBlockType = &BlockRegistry::getInstance().getBlock(topBlockId);
         char waterTopValue = (topBlockType->blockType == Block::TRANSPARENT ||
                               topBlockType->blockType == Block::SOLID)
                                  ? 1
@@ -712,7 +712,7 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
                 bottomBlockId = downData ? downData->getBlock(x, CHUNK_HEIGHT - 1, z) : Blocks::AIR;
             }
             
-            const Block *bottomBlockType = &Blocks::blocks[bottomBlockId];
+            const Block *bottomBlockType = &BlockRegistry::getInstance().getBlock(bottomBlockId);
             if (bottomBlockType->blockType != Block::LIQUID && bottomBlockType->blockType != Block::SOLID) {
                 generateLiquidFaces(x, y, z, BOTTOM, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
             }

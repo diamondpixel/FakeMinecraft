@@ -47,6 +47,15 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
             chunkData.clear();
             chunkList.clear();
 
+            // Clear rendering lists to prevent use-after-free
+            renderChunks.clear();
+            solidChunks.clear();
+            billboardChunks.clear();
+            waterChunks.clear();
+            frustumVisibleChunks.clear();
+            toDeleteList.clear();
+            renderChunksDirty = true;
+
             // Clear all queues efficiently
             chunkQueue = {};
             chunkDataQueue = {};
@@ -122,7 +131,13 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
             frustumVisibleChunks.push_back(chunk);
             
             // HOQ ENABLED: Only render if occlusionVisible (Freezes with last state if queries stop)
-            if (chunk->occlusionVisible) {
+            // EXEMPTION: Chunks in the 3x3x3 Safe Zone around camera are ALWAYS rendered
+            const int distCX = std::abs(chunk->chunkPos.x - camChunkX);
+            const int distCY = std::abs(chunk->chunkPos.y - camChunkY);
+            const int distCZ = std::abs(chunk->chunkPos.z - camChunkZ);
+            const bool inSafeZone = (distCX <= 1 && distCY <= 1 && distCZ <= 1);
+            
+            if (chunk->occlusionVisible || inSafeZone) {
                 ++numChunksRendered;
                 
                 if (chunk->hasSolid()) solidChunks.push_back(chunk);
@@ -139,9 +154,9 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
         }
     }
 
-    // OPTIMIZATION: Only sort when camera chunk position changes
-    const bool cameraMoved = (camChunkX != prevSortCamX || camChunkZ != prevSortCamZ);
-    if (cameraMoved) {
+    //Always sort when anything might have changed visibility
+    const bool shouldSort = true; // Force sorting every frame for visual stability
+    if (shouldSort) {
         prevSortCamX = camChunkX;
         prevSortCamZ = camChunkZ;
         
@@ -222,14 +237,17 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
                         glGetQueryObjectuiv(chunk->queryID, GL_QUERY_RESULT, &result);
                         bool rawVisible = (result > 0);
                         
-                        // Logic:
+                        // Logic: Hysteresis (Discrete Voting)
                         // If Visible: Show immediately.
-                        // If Occluded: Hide immediately (interlacing holds it for 3 frames).
-                        chunk->occlusionVisible = rawVisible;
-                        
-                        // Reset smoothing counters (unused but kept for cleanliness)
-                        chunk->occlusionCounter = rawVisible ? 0 : 10;
-                        chunk->occlusionScore = rawVisible ? 1.0f : 0.0f;
+                        // If Occluded: Wait for 4 consecutive failures before hiding.
+                        if (rawVisible) {
+                            chunk->occlusionVisible = true;
+                            chunk->occlusionCounter = 0;
+                        } else {
+                            if (++chunk->occlusionCounter >= 4) {
+                                chunk->occlusionVisible = false;
+                            }
+                        }
                     }
                 }
             }
@@ -248,22 +266,36 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
         (*bboxShader)["viewProjection"] = lastViewProjection;
         
         glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LEQUAL);
+        glDepthFunc(GL_GEQUAL); // Reverse-Z: Use Greater-Than-Or-Equal
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE); 
         
-        // Bind VAO once
+        // Bind VAO ONCE for the entire batch
         if (bboxVAO == 0) initBoundingBoxMesh();
         glBindVertexArray(bboxVAO);
 
         for (Chunk *chunk : frustumVisibleChunks) {
             if (chunk->queryID != 0) {
+                // EXEMPTION: Skip queries for chunks near camera (Safe Zone)
+                const int distCX = std::abs(chunk->chunkPos.x - camChunkX);
+                const int distCY = std::abs(chunk->chunkPos.y - camChunkY);
+                const int distCZ = std::abs(chunk->chunkPos.z - camChunkZ);
+                if (distCX <= 1 && distCY <= 1 && distCZ <= 1) continue;
+
                 size_t chunkHash = chunk->chunkPos.x * 73856093 ^ chunk->chunkPos.y * 19349663 ^ chunk->chunkPos.z * 83492791;
 
                 if ((chunkHash + frameCounter) % 3 == 0) {
                     glBeginQuery(GL_SAMPLES_PASSED, chunk->queryID);
-                    drawBoundingBox(chunk->cullingCenter, chunk->cullingExtents);
+                    
+                    // Optimized internal draw: No VAO binding, only translate/scale/uniform
+                    // Slightly shrink the box (epsilon) to prevent "peeking" through neighbors
+                    glm::mat4 model = glm::mat4(1.0f);
+                    model = glm::translate(model, chunk->cullingCenter);
+                    model = glm::scale(model, (chunk->cullingExtents - 0.01f) * 2.0f);
+                    (*bboxShader)["model"] = model;
+                    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+                    
                     glEndQuery(GL_SAMPLES_PASSED);
                     chunk->queryIssued = true;
                 }
@@ -274,7 +306,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
         glEnable(GL_CULL_FACE); 
         glDepthMask(GL_TRUE);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        glDepthFunc(GL_LESS);
+        glDepthFunc(GL_GEQUAL); // Maintain GEQUAL for rest of frame
     }
 
     // Billboard Pass (always visible, no occlusion for foliage)

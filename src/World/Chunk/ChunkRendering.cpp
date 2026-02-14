@@ -10,7 +10,7 @@ inline void setupWorldVAO() {
     glEnableVertexAttribArray(1);
     glVertexAttribIPointer(2, 1, GL_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, direction)));
     glEnableVertexAttribArray(2);
-    glVertexAttribIPointer(3, 1, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, layerIndex)));
+    glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, layerIndex)));
     glEnableVertexAttribArray(3);
 }
 
@@ -24,7 +24,7 @@ inline void setupWaterVAO() {
     glVertexAttribIPointer(2, 1, GL_BYTE, sizeof(FluidVertex),
                            reinterpret_cast<void *>(offsetof(FluidVertex, direction)));
     glEnableVertexAttribArray(2);
-    glVertexAttribIPointer(3, 1, GL_UNSIGNED_BYTE, sizeof(FluidVertex), reinterpret_cast<void *>(offsetof(FluidVertex, layerIndex)));
+    glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, sizeof(FluidVertex), reinterpret_cast<void *>(offsetof(FluidVertex, layerIndex)));
     glEnableVertexAttribArray(3);
     glVertexAttribIPointer(4, 1, GL_BYTE, sizeof(FluidVertex), reinterpret_cast<void *>(offsetof(FluidVertex, top)));
     glEnableVertexAttribArray(4);
@@ -37,7 +37,7 @@ inline void setupBillboardVAO() {
     glVertexAttribPointer(1, 2, GL_BYTE, GL_FALSE, sizeof(BillboardVertex),
                               reinterpret_cast<void *>(offsetof(BillboardVertex, texU)));
     glEnableVertexAttribArray(1);
-    glVertexAttribIPointer(3, 1, GL_UNSIGNED_BYTE, sizeof(BillboardVertex), 
+    glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, sizeof(BillboardVertex), 
                           reinterpret_cast<void *>(offsetof(BillboardVertex, layerIndex)));
     glEnableVertexAttribArray(3);
 }

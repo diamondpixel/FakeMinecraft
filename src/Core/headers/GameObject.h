@@ -115,7 +115,7 @@ private:
 
     // Resources
     graphics::TextureManager *textureManager = nullptr;
-    graphics::Texture *gameTexture = nullptr;
+
     unsigned int outlineVAO = 0;
     unsigned int outlineVBO = 0;
 
