@@ -3,11 +3,16 @@
 #include <filesystem>
 #include <algorithm>
 #include <queue>
-#include <cstring>
+#include <string_view>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
 namespace fs = std::filesystem;
+
+/**
+ * @file TextureManager.cpp
+ * @brief Implementation of the TextureManager class for managing voxel textures.
+ */
 
 TextureManager& TextureManager::getInstance() {
     static TextureManager instance;
@@ -21,8 +26,8 @@ TextureManager::~TextureManager() {
 }
 
 uint16_t TextureManager::getLayerIndex(const std::string& textureName) const {
-    auto it = textureMap.find(textureName);
-    if (it != textureMap.end()) {
+    const auto it = textureMap.find(textureName);
+    if (it != textureMap.end()) [[likely]] {
         return it->second;
     }
     std::cerr << "Texture not found: " << textureName << ". Defaulting to 0." << std::endl;
@@ -33,8 +38,7 @@ TextureManager::TextureData TextureManager::loadPixels(const std::string& path, 
     TextureData data;
     data.name = name;
     unsigned char* pixels = stbi_load(path.c_str(), &data.width, &data.height, &data.channels, 4);
-    if (pixels) {
-        // OPTIMIZATION: Use memcpy instead of assign() for raw pixel data
+    if (pixels) [[likely]] {
         const size_t size = static_cast<size_t>(data.width) * data.height * 4;
         data.pixels.resize(size);
         std::memcpy(data.pixels.data(), pixels, size);
@@ -46,152 +50,222 @@ TextureManager::TextureData TextureManager::loadPixels(const std::string& path, 
     return data;
 }
 
-// OPTIMIZATION: O(n²) BFS flood-fill replaces O(n⁴) brute-force algorithm
-// Original: For each transparent pixel, scan ALL pixels -> O(transparent * total) = O(n⁴)
-// New: Single BFS pass from opaque edges -> O(n²) where n = total pixels
-void fixTextureBleeding(std::vector<unsigned char>& pixels, int width, int height) {
-    if (width <= 0 || height <= 0) return;
-    
+/**
+ * @brief Fixes texture bleeding by propagating colors from opaque pixels to adjacent transparent pixels.
+ * 
+ * This prevents dark or "garbage" borders from appearing at the edges of transparent textures 
+ * due to linear filtering (mipmap generation) in OpenGL.
+ * 
+ * @param pixels The pixel data to modify.
+ * @param width The width of the texture.
+ * @param height The height of the texture.
+ */
+void fixTextureBleeding(std::vector<unsigned char>& pixels, const int width, const int height) {
+    if (width <= 0 || height <= 0) [[unlikely]] return;
+
     const int totalPixels = width * height;
-    
-    // Track which source pixel to copy color from (-1 = not yet assigned)
-    std::vector<int> sourceIdx(totalPixels, -1);
-    
-    // BFS queue: stores pixel indices
+    std::vector sourceIdx(totalPixels, -1);
     std::queue<int> bfsQueue;
-    
+
     // Initialize: seed BFS from all opaque pixels
-    for (int i = 0; i < totalPixels; ++i) {
-        if (pixels[i * 4 + 3] > 0) {
-            sourceIdx[i] = i;  // Opaque pixels are their own source
+    const unsigned char* alphaPtr = pixels.data() + 3;
+    for (int i = 0; i < totalPixels; ++i, alphaPtr += 4) {
+        if (*alphaPtr > 0) {
+            sourceIdx[i] = i;
             bfsQueue.push(i);
         }
     }
-    
-    // If no opaque pixels, nothing to propagate
-    if (bfsQueue.empty()) return;
-    
-    // 4-connected neighbors (left, right, up, down)
-    const int dx[] = {-1, 1, 0, 0};
-    const int dy[] = {0, 0, -1, 1};
-    
-    // BFS: propagate nearest opaque color to all transparent pixels
+
+    if (bfsQueue.empty()) [[unlikely]] return;
+
+    // 4-connected neighbors optimized for cache access
+    const int offsets[] = {-1, 1, -width, width};
+
     while (!bfsQueue.empty()) {
         const int current = bfsQueue.front();
         bfsQueue.pop();
-        
+
         const int cx = current % width;
         const int cy = current / width;
-        
+        const int srcIdx = sourceIdx[current];
+
+        // Unrolled neighbor checking with bounds optimization
         for (int d = 0; d < 4; ++d) {
-            const int nx = cx + dx[d];
-            const int ny = cy + dy[d];
-            
-            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-            
-            const int neighbor = ny * width + nx;
-            
-            // Only visit unassigned (transparent) pixels
-            if (sourceIdx[neighbor] == -1) {
-                sourceIdx[neighbor] = sourceIdx[current];
+            int neighbor;
+            bool inBounds;
+
+            if (d < 2) {  // Horizontal neighbors
+                inBounds = (d == 0) ? (cx >= 1) : (cx < width - 1);
+                neighbor = current + offsets[d];
+            } else {  // Vertical neighbors
+                inBounds = (d == 2) ? (cy >= 1) : (cy < height - 1);
+                neighbor = current + offsets[d];
+            }
+
+            if (inBounds && sourceIdx[neighbor] == -1) [[likely]] {
+                sourceIdx[neighbor] = srcIdx;
                 bfsQueue.push(neighbor);
             }
         }
     }
-    
-    // Apply colors from source pixels to transparent pixels
-    for (int i = 0; i < totalPixels; ++i) {
-        const int srcI = sourceIdx[i];
-        if (pixels[i * 4 + 3] == 0 && srcI != -1 && srcI != i) {
-            const int src = srcI * 4;
-            const int dst = i * 4;
-            pixels[dst + 0] = pixels[src + 0];
-            pixels[dst + 1] = pixels[src + 1];
-            pixels[dst + 2] = pixels[src + 2];
-            // Alpha stays 0
+
+    // Apply colors with reduced branching
+    unsigned char* pixelPtr = pixels.data();
+    for (int i = 0; i < totalPixels; ++i, pixelPtr += 4) {
+        if (pixelPtr[3] == 0) [[unlikely]] {
+            const int srcI = sourceIdx[i];
+            if (srcI != -1 && srcI != i) [[likely]] {
+                const unsigned char* src = pixels.data() + srcI * 4;
+                std::memcpy(pixelPtr, src, 3);  // Copy RGB only
+            }
         }
     }
 }
 
-// OPTIMIZATION: Precompute X-coordinate lookup table + use memcpy
-std::vector<unsigned char> TextureManager::upscaleImage(const std::vector<unsigned char>& src, int srcW, int srcH, int dstW, int dstH) {
-    if (srcW == dstW && srcH == dstH) return src;
+// Optimized upscaling with better memory access patterns
+std::vector<unsigned char> TextureManager::upscaleImage(const std::vector<unsigned char>& src,
+                                                         int srcW, int srcH, int dstW, int dstH) {
+    if (srcW == dstW && srcH == dstH) [[unlikely]] return src;
 
     std::vector<unsigned char> dst(static_cast<size_t>(dstW) * dstH * 4);
-    
-    // Precompute source X for each destination X (avoid repeated float math)
+
+    // Precompute both X and Y lookups
     std::vector<int> srcXLookup(dstW);
+    std::vector<int> srcYLookup(dstH);
+
     const float xRatio = static_cast<float>(srcW) / dstW;
+    const float yRatio = static_cast<float>(srcH) / dstH;
+
     for (int x = 0; x < dstW; ++x) {
         srcXLookup[x] = static_cast<int>(x * xRatio);
     }
-    
-    const float yRatio = static_cast<float>(srcH) / dstH;
-    const int srcStride = srcW * 4;
-    
     for (int y = 0; y < dstH; ++y) {
-        const int srcY = static_cast<int>(y * yRatio);
-        const unsigned char* srcRow = src.data() + srcY * srcStride;
-        unsigned char* dstRow = dst.data() + y * dstW * 4;
-        
+        srcYLookup[y] = static_cast<int>(y * yRatio);
+    }
+
+    const int srcStride = srcW * 4;
+    const int dstStride = dstW * 4;
+    const unsigned char* srcData = src.data();
+    unsigned char* dstData = dst.data();
+
+    for (int y = 0; y < dstH; ++y) {
+        const unsigned char* srcRow = srcData + srcYLookup[y] * srcStride;
+        unsigned char* dstRow = dstData + y * dstStride;
+
         for (int x = 0; x < dstW; ++x) {
-            // Use memcpy for 4-byte copy (compiler can optimize to single 32-bit mov)
-            std::memcpy(dstRow + x * 4, srcRow + srcXLookup[x] * 4, 4);
+            const unsigned char* srcPixel = srcRow + srcXLookup[x] * 4;
+            unsigned char* dstPixel = dstRow + x * 4;
+            // Use 32-bit copy for 4 bytes (better than memcpy for small fixed sizes)
+            *reinterpret_cast<uint32_t*>(dstPixel) = *reinterpret_cast<const uint32_t*>(srcPixel);
         }
     }
     return dst;
 }
 
-// OPTIMIZATION: Fixed-point integer tinting (avoid per-pixel float multiplication)
 namespace {
+    /**
+     * @brief Parameters for color tinting.
+     * Multipliers are stored as (Fixed-Point 8.8) to allow for fast integer shifts.
+     */
     struct TintParams {
-        uint32_t rMul, gMul, bMul;  // 8.8 fixed-point multipliers (0-256)
+        uint32_t rMul, gMul, bMul;
     };
-    
-    inline void applyTint(std::vector<unsigned char>& pixels, const TintParams& tint) {
-        const size_t size = pixels.size();
-        for (size_t i = 0; i < size; i += 4) {
-            if (pixels[i + 3] > 0) {
-                pixels[i + 0] = static_cast<unsigned char>((pixels[i + 0] * tint.rMul) >> 8);
-                pixels[i + 1] = static_cast<unsigned char>((pixels[i + 1] * tint.gMul) >> 8);
-                pixels[i + 2] = static_cast<unsigned char>((pixels[i + 2] * tint.bMul) >> 8);
-            }
-        }
-    }
-    
-    inline void applyWaterTint(std::vector<unsigned char>& pixels, const TintParams& tint) {
-        const size_t size = pixels.size();
-        for (size_t i = 0; i < size; i += 4) {
-            if (pixels[i + 3] > 0) {
-                pixels[i + 0] = static_cast<unsigned char>((pixels[i + 0] * tint.rMul) >> 8);
-                pixels[i + 1] = static_cast<unsigned char>((pixels[i + 1] * tint.gMul) >> 8);
-                pixels[i + 2] = static_cast<unsigned char>((pixels[i + 2] * tint.bMul) >> 8);
-                if (pixels[i + 3] < 180) {
-                    pixels[i + 3] = 180;
+
+    /**
+     * @brief Applies a color tint to a pixel buffer.
+     * 
+     * @param pixels The pixel buffer.
+     * @param size Size of the buffer in bytes.
+     * @param tint The tint parameters.
+     * @param modifyAlpha Whether to enforce a minimum alpha threshold (useful for water).
+     */
+    [[gnu::always_inline]]
+    void applyTintImpl(unsigned char* pixels, const size_t size, const TintParams& tint, const bool modifyAlpha = false) {
+        const unsigned char* end = pixels + size;
+        for (unsigned char* p = pixels; p < end; p += 4) {
+            if (p[3] > 0) [[likely]] {
+                p[0] = static_cast<unsigned char>((p[0] * tint.rMul) >> 8);
+                p[1] = static_cast<unsigned char>((p[1] * tint.gMul) >> 8);
+                p[2] = static_cast<unsigned char>((p[2] * tint.bMul) >> 8);
+                if (modifyAlpha && p[3] < 180) {
+                    p[3] = 180;
                 }
             }
         }
     }
-    
-    // Pre-computed tint values as fixed-point (avoid runtime float->int conversion)
+
+    inline void applyTint(std::vector<unsigned char>& pixels, const TintParams& tint) {
+        applyTintImpl(pixels.data(), pixels.size(), tint, false);
+    }
+
+    inline void applyWaterTint(std::vector<unsigned char>& pixels, const TintParams& tint) {
+        applyTintImpl(pixels.data(), pixels.size(), tint, true);
+    }
+
+    /// Predefined green tint for grass and foliage.
     constexpr TintParams GREEN_TINT = {
-        (145 * 256) / 255,  // ~145
-        (189 * 256) / 255,  // ~189
-        (89 * 256) / 255    // ~89
+        (145 * 256) / 255,
+        (189 * 256) / 255,
+        (89 * 256) / 255
     };
-    
+
+    /// Predefined blue tint for water.
     constexpr TintParams WATER_TINT = {
         (63 * 256) / 255,
         (118 * 256) / 255,
         (228 * 256) / 255
     };
-    
-    inline bool needsGreenTint(const std::string& name) {
-        return name == "grass_block_top" || 
-               name == "short_grass" || 
-               name == "tall_grass_bottom" || 
-               name == "tall_grass_top" || 
-               name == "oak_leaves";
+
+    /**
+     * @brief Compile-time DJB2 hash for string views.
+     * Used for fast switch-like logic when identifying texture names.
+     */
+    constexpr uint32_t hashString(std::string_view sv) {
+        uint32_t hash = 5381;
+        for (char c : sv) {
+            hash = ((hash << 5) + hash) + static_cast<unsigned char>(c);
+        }
+        return hash;
+    }
+
+    /**
+     * @brief Determines if a texture name refers to a "foliage" block that needs green tinting.
+     */
+    inline bool needsGreenTint(std::string_view name) {
+        // Fast path: check first character
+        if (name.empty()) [[unlikely]] return false;
+
+        const char first = name[0];
+        if (first != 'g' && first != 's' && first != 't' && first != 'o') {
+            return false;
+        }
+
+        // Use constexpr hashes for compile-time optimization
+        constexpr uint32_t GRASS_BLOCK_TOP = hashString("grass_block_top");
+        constexpr uint32_t SHORT_GRASS = hashString("short_grass");
+        constexpr uint32_t TALL_GRASS_BOTTOM = hashString("tall_grass_bottom");
+        constexpr uint32_t TALL_GRASS_TOP = hashString("tall_grass_top");
+        constexpr uint32_t OAK_LEAVES = hashString("oak_leaves");
+
+        const uint32_t hash = hashString(name);
+        return hash == GRASS_BLOCK_TOP || hash == SHORT_GRASS ||
+               hash == TALL_GRASS_BOTTOM || hash == TALL_GRASS_TOP ||
+               hash == OAK_LEAVES;
+    }
+
+    /**
+     * @brief Checks if a texture is a fluid (water or lava).
+     * Fluids are special because they are often animated and need specific frame counts.
+     */
+    inline bool isFluidTexture(std::string_view name) {
+        return name == "water_still" || name == "lava_still";
+    }
+
+    /**
+     * @brief Checks if a file extension is supported by the manager.
+     */
+    inline bool isValidTextureExtension(std::string_view ext) {
+        return ext == ".png" || ext == ".jpg" || ext == ".tga";
     }
 }
 
@@ -202,148 +276,142 @@ void TextureManager::loadTextures(const std::string& directoryPath) {
 
     stbi_set_flip_vertically_on_load(true);
 
-    if (!fs::exists(directoryPath)) {
+    if (!fs::exists(directoryPath)) [[unlikely]] {
         std::cerr << "Texture directory does not exist: " << directoryPath << std::endl;
-        return; 
+        return;
     }
 
-    // OPTIMIZATION: Pre-allocate vector capacity
     rawTextures.reserve(64);
 
+    // 1. Scan directory and load raw pixels
     for (const auto& entry : fs::directory_iterator(directoryPath)) {
-        if (entry.is_regular_file()) {
-            // OPTIMIZATION: Avoid string copy by using const ref to path extension
-            const auto& ext = entry.path().extension();
-            if (ext == ".png" || ext == ".jpg" || ext == ".tga") {
-                std::string name = entry.path().stem().string();
-                
-                TextureData data = loadPixels(entry.path().string(), name);
+        if (!entry.is_regular_file()) continue;
 
-                if (data.width > 0) {
-                    maxWidth = std::max(maxWidth, data.width);
-                    // Determine frame height (assume square frames if strip)
-                    int frameHeight = (data.height > data.width) ? data.width : data.height;
-                    maxHeight = std::max(maxHeight, frameHeight);
-                    // OPTIMIZATION: Use emplace_back with move
-                    rawTextures.emplace_back(std::move(data));
-                }
-            }
+        const std::string ext = entry.path().extension().string();
+        if (!isValidTextureExtension(ext)) continue;
+
+        std::string name = entry.path().stem().string();
+        TextureData data = loadPixels(entry.path().string(), name);
+
+        if (data.width > 0) [[likely]] {
+            maxWidth = std::max(maxWidth, data.width);
+            int frameHeight = (data.height > data.width) ? data.width : data.height;
+            maxHeight = std::max(maxHeight, frameHeight);
+            rawTextures.emplace_back(std::move(data));
         }
     }
 
-    if (rawTextures.empty()) {
+    if (rawTextures.empty()) [[unlikely]] {
         std::cerr << "No textures found in " << directoryPath << std::endl;
         return;
     }
 
     const int arrayWidth = std::max(maxWidth, maxHeight);
-    const int arrayHeight = arrayWidth; 
+    const int arrayHeight = arrayWidth;
 
-    // Calculate total layers (including frames)
+    // 2. Calculate total layers (handling animations and padding)
     size_t layerCount = 0;
     for (const auto& tex : rawTextures) {
-        if (tex.height > tex.width && tex.height % tex.width == 0) {
-            layerCount += (tex.height / tex.width);
-        } else {
-            layerCount++;
+        int frames = (tex.height > tex.width && tex.height % tex.width == 0)
+                     ? (tex.height / tex.width) : 1;
+
+        // Fluid textures are padded/looped to 32 frames to match shader expectations
+        if (isFluidTexture(tex.name)) {
+            frames = 32;
         }
+        layerCount += frames;
     }
 
     const size_t layerSize = static_cast<size_t>(arrayWidth) * arrayHeight * 4;
-    
-    std::vector<unsigned char> textureArrayBuffer;
-    // OPTIMIZATION: Reserve exact needed capacity upfront
-    textureArrayBuffer.reserve(layerSize * layerCount);
 
-    // Sort for deterministic layer ordering
-    std::sort(rawTextures.begin(), rawTextures.end(), [](const TextureData& a, const TextureData& b) {
-        return a.name < b.name;
-    });
+    // 3. Pre-allocate intermediate buffer
+    std::vector<unsigned char> textureArrayBuffer(layerSize * layerCount);
+    unsigned char* bufferPtr = textureArrayBuffer.data();
+
+    // Sort for deterministic ordering (guarantees layer indices remain stable if possible)
+    std::sort(rawTextures.begin(), rawTextures.end(),
+              [](const TextureData& a, const TextureData& b) { return a.name < b.name; });
 
     uint16_t currentLayer = 0;
     for (auto& tex : rawTextures) {
-        // OPTIMIZATION: Move pixels instead of copy (we're done with rawTextures after this)
-        std::vector<unsigned char> currentPixels = std::move(tex.pixels);
+        std::vector<unsigned char>& currentPixels = tex.pixels;
 
-        // Apply tinting using integer fixed-point math
-        if (needsGreenTint(tex.name)) {
+        // Apply Tints
+        const std::string_view nameView(tex.name);
+        if (needsGreenTint(nameView)) {
             applyTint(currentPixels, GREEN_TINT);
             std::cout << "Applied Green Tint to: " << tex.name << std::endl;
-        } 
-        else if (tex.name == "water_still") {
+        }
+        else if (nameView == "water_still") {
             applyWaterTint(currentPixels, WATER_TINT);
             std::cout << "Applied Blue Tint to: " << tex.name << std::endl;
         }
 
-        // Fix texture bleeding with optimized O(n²) BFS
+        // Fix Bleeding
         fixTextureBleeding(currentPixels, tex.width, tex.height);
 
-        // Handle frames
-        int sourceFrames = 1;
-        if (tex.height > tex.width && tex.height % tex.width == 0) {
-            sourceFrames = tex.height / tex.width;
-        }
+        // Calculate animated frames
+        const int sourceFrames = (tex.height > tex.width && tex.height % tex.width == 0)
+                                 ? (tex.height / tex.width) : 1;
+        const int targetFrames = isFluidTexture(nameView) ? 32 : sourceFrames;
+        const int srcFrameHeight = tex.width;
+        const size_t srcFrameSize = static_cast<size_t>(tex.width) * srcFrameHeight * 4;
 
-        int targetFrames = sourceFrames;
-        // PAD FLUIDS TO 32 FRAMES for shader compatibility
-        // The shader expects 32 frames for animation. accessible via aLayerIndex + frame
-        if (tex.name == "water_still" || tex.name == "lava_still") {
-             targetFrames = 32;
-        }
-
-        int srcFrameHeight = tex.width; // Assume square frames
-        size_t srcFrameSize = static_cast<size_t>(tex.width) * srcFrameHeight * 4;
-
+        // Process frames individually
         for (int f = 0; f < targetFrames; ++f) {
-             int sourceFrameIndex = f % sourceFrames; // Wrap around for padding
+            const int sourceFrameIndex = f % sourceFrames; // Loop frames if targetCount > sourceCount
 
-             std::vector<unsigned char> framePixels;
-             if (sourceFrames > 1) {
-                 // Extract frame
-                 auto start = currentPixels.begin() + (sourceFrameIndex * srcFrameSize);
-                 auto end = start + srcFrameSize;
-                 framePixels.assign(start, end);
-             } else {
-                 // Even if source is 1 frame, if we are padding to 32, we must COPY
-                 if (targetFrames > 1) {
-                     framePixels = currentPixels;
-                 } else {
-                     framePixels = std::move(currentPixels);
-                 }
-             }
+            std::vector<unsigned char> framePixels;
 
-             // Upscale if necessary
-             std::vector<unsigned char> processedPixels = upscaleImage(framePixels, tex.width, srcFrameHeight, arrayWidth, arrayHeight);
-             
-             // Append to master buffer
-             textureArrayBuffer.insert(textureArrayBuffer.end(), processedPixels.begin(), processedPixels.end());
+            if (sourceFrames > 1) {
+                // Extract single frame from strip
+                const size_t offset = sourceFrameIndex * srcFrameSize;
+                framePixels.assign(currentPixels.begin() + offset,
+                                  currentPixels.begin() + offset + srcFrameSize);
+            } else {
+                // Single frame source
+                framePixels = (targetFrames == 1) ? std::move(currentPixels) : currentPixels;
+            }
+
+            // Upscale to match array dimension and copy to CPU buffer
+            if (tex.width != arrayWidth || srcFrameHeight != arrayHeight) {
+                std::vector<unsigned char> scaled = upscaleImage(framePixels, tex.width,
+                                                                 srcFrameHeight, arrayWidth, arrayHeight);
+                std::memcpy(bufferPtr, scaled.data(), layerSize);
+            } else {
+                std::memcpy(bufferPtr, framePixels.data(), layerSize);
+            }
+
+            bufferPtr += layerSize;
         }
 
         textureMap[tex.name] = currentLayer;
-        std::cout << "Loaded Texture: " << tex.name << " -> Layer " << currentLayer << " (Source: " << sourceFrames << ", Target: " << targetFrames << " frames)" << std::endl;
+        std::cout << "Loaded Texture: " << tex.name << " -> Layer " << currentLayer
+                  << " (Source: " << sourceFrames << ", Target: " << targetFrames << " frames)" << std::endl;
         currentLayer += targetFrames;
     }
 
-    // Upload to OpenGL
+    // 4. Upload to OpenGL GPU Memory
     if (textureArrayID != 0) {
         glDeleteTextures(1, &textureArrayID);
     }
-    
+
     glGenTextures(1, &textureArrayID);
     glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
 
+    // Use Nearest filtering for voxel look, but mipmaps for distance
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
-    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, arrayWidth, arrayHeight, static_cast<GLsizei>(layerCount),
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, textureArrayBuffer.data());
-    
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, arrayWidth, arrayHeight,
+                 static_cast<GLsizei>(layerCount), 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 textureArrayBuffer.data());
+
     glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
-    
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
-    std::cout << "Texture Array Generated. Size: " << arrayWidth << "x" << arrayHeight 
-              << " Layers: " << layerCount << std::endl;
+    std::cout << "Texture Array Generated. Total Size: " << arrayWidth << "x" << arrayHeight
+              << " | Total Layers: " << layerCount << std::endl;
 }

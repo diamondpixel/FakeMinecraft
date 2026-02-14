@@ -9,7 +9,6 @@
 #include "CheckBox.h"
 #include "Physics.h"
 #include "Slider.h"
-#include "TextureManager.h"
 #include "TypeBox.h"
 #include "Sky.h"
 
@@ -31,109 +30,164 @@ struct GameState {
 };
 
 // ============================================================================
-// OPTIMIZED GAME OBJECT CLASS
+// GAME OBJECT CLASS
 // ============================================================================
+/**
+ * @class GameObject
+ * @brief The central controller class for the game engine, following the Singleton pattern.
+ * 
+ * GameObject manages the main game loop, initialization of all subsystems (Graphics, Shaders, UI, Planet),
+ * and high-level logic like input handling, rendering orchestration, and block interaction.
+ * 
+ * The class layout is optimized for cache efficiency by grouping frequently accessed data 
+ * ("hot" data) like the Camera and GameState at the top, while keeping "cold" data 
+ * like resource paths at the bottom.
+ */
 class GameObject {
 public:
-    // Singleton access
+    /**
+     * @brief Gets the singleton instance of the GameObject.
+     * @param x Initial window width.
+     * @param y Initial window height.
+     * @param windowName Title of the game window.
+     * @return Reference to the GameObject instance.
+     */
     static GameObject &getInstance(float x, float y, const std::string &windowName);
 
-    // Main initialization
+    /**
+     * @brief Initializes the entire game world and enters the main loop.
+     * 
+     * Sets up graphics, shaders, UI elements, the planet, and binds all necessary 
+     * callbacks for rendering and logic updates.
+     */
     void init();
 
-    // Prevent copying
+    // Prevent copying to maintain Singleton integrity
     GameObject(const GameObject &) = delete;
     GameObject &operator=(const GameObject &) = delete;
 
 private:
-    // Constructor/Destructor
+    /**
+     * @brief Constructor for GameObject.
+     * @param x Initial window width.
+     * @param y Initial window height.
+     * @param windowName Name of the window.
+     */
     GameObject(float x, float y, std::string windowName);
+    
+    /**
+     * @brief Destructor for GameObject. Handles resource cleanup including VAOs/VBOs and Shaders.
+     */
     ~GameObject();
 
-    // Initialization methods
+    /** @name Initialization Helpers @{ */
     void initializeGraphics();
     void initializeShaders();
     void initializeUIElements();
     void initializeOutlineVAO();
+    /** @} */
 
-    // Update methods
+    /** @name Live Update Systems @{ */
+    /// Updates all active shaders with current frame matrices and lighting data.
     void updateShaders();
-    void setupRenderingState();
+    /// Configures global OpenGL state (Depth, Blending, Culling) for the current frame.
+    void setupRenderingState() const;
+    /// Updates the window title with performance metrics (FPS, Chunk Count).
     static void updateWindowTitle();
+    /// Synchronizes the graphics engine with the user-selected FPS cap or VSync.
+    void updateFPSSettings() const;
+    /** @} */
 
-    // Input handling
+    /** @name Input Callbacks @{ */
     void mouseCallBack();
     void keyboardCallBack(float deltaTime);
-    void handlePlayingMouseInput(graphics::MouseState &ms);
-    void handlePausedMouseInput(graphics::MouseState &ms);
+    void handlePlayingMouseInput(const graphics::MouseState &ms);
+    void handlePausedMouseInput(const graphics::MouseState &ms);
+    /** @} */
 
-    // Rendering
+    /** @name Rendering Layers @{ */
     void renderUI() const;
     void renderBlockOutline(unsigned int outlineVAO);
     void renderFluidOverlay() const;
     void renderCrosshair() const;
     void renderDebugInfo() const;
     void renderPauseMenu() const;
+    /** @} */
 
-    // Block operations
-    void handleBlockBreak(const Physics::RaycastResult &result);
-    void handleBlockPlace(const Physics::RaycastResult &result);
+    /** @name Block Interaction Logic @{ */
+    static void handleBlockBreak(const Physics::RaycastResult &result);
+    void handleBlockPlace(const Physics::RaycastResult &result) const;
     void handleBlockPick(const Physics::RaycastResult &result);
+    /** @} */
 
-    // Utility
+    /** @name Audio Utilities @{ */
     static void playSound(uint16_t block_id);
-    void updateFPSSettings() const;
+    /** @} */
 
-    // Member variables - grouped by usage
+    // ========================================================================
+    // MEMBER VARIABLES - Optimized layout for cache efficiency
+    // ========================================================================
+
+    /// @brief Primary camera instance. Most frequently accessed during matrix updates.
     Camera camera;
+    
+    /// @brief Holds the current play state (Paused/Playing) and UI selection.
     GameState gameState;
 
-    // Shaders
-    // Shaders
+    /** @brief Matrix caching system to avoid redundant perspective/view calculations. */
+    struct CachedMatrices {
+        glm::mat4 view;
+        glm::mat4 projection;
+        bool dirty = true; ///< Set to true whenever the camera moves or window resizes.
+    } cachedMatrices;
+
+    /** @brief Cached UI center points to avoid repeated division in rendering code. */
+    struct {
+        float x = 0.0f;
+        float y = 0.0f;
+    } cachedWindowCenter;
+
+    /** @name Screen Dimensions @{ */
+    float windowX, windowY;
+    float lastX, lastY;
+    /** @} */
+
+    /// @brief Target frame rate (55 = VSync, 361 = Uncapped).
+    int fpsCap = 55;
+
+    /** @name Debug/Freecam State @{ */
+    bool freecamActive = false;
+    glm::vec3 savedPlayerPosition;
+    glm::mat4 savedViewProjection;
+    /** @} */
+
+    /** @name Shader Handles @{ */
     Shader* worldShader = nullptr;
     Shader* billboardShader = nullptr;
     Shader* fluidShader = nullptr;
     Shader* outlineShader = nullptr;
     Shader* bboxShader = nullptr;
+    /** @} */
 
-    // Sky system
+    /// @brief Manages the day/night cycle and atmospheric rendering.
     Sky sky;
 
-    // UI Elements
+    /** @name UI Components @{ */
     Checkbox fullscreenCheckBox;
     Slider fpsSlider;
     Slider renderDistanceSlider;
     TypeBox seedBox;
+    /** @} */
 
-    // Window state
-    float windowX, windowY;
-    float lastX, lastY;
+    /** @name Resource Identifiers @{ */
     std::string window_name;
-
-    // Settings
-    int fpsCap = 55;
-    
-    // Freecam mode
-    bool freecamActive = false;
-    glm::vec3 savedPlayerPosition;
-    glm::mat4 savedViewProjection; // Frozen frustum during freecam
-
-    // Resources
-    graphics::TextureManager *textureManager = nullptr;
-
     unsigned int outlineVAO = 0;
     unsigned int outlineVBO = 0;
-
-    // Cached values for performance
-    struct CachedMatrices {
-        glm::mat4 view;
-        glm::mat4 projection;
-        bool dirty = true;
-    } cachedMatrices;
+    /** @} */
 };
 
 // ============================================================================
-// CONSTANTS
+// CONSTANTS - constexpr for compile-time evaluation
 // ============================================================================
 namespace GameConstants {
     constexpr float CROSSHAIR_SIZE = 5.0f;

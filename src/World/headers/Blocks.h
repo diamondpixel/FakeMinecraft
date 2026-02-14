@@ -1,15 +1,28 @@
+/**
+ * @file Blocks.h
+ * @brief Utility namespace for global block identification and registry initialization.
+ */
+
 #pragma once
 
 #include "BlockRegistry.h"
 #include "BlockBuilder.h"
 #include "../../Renderer/headers/TextureManager.h"
 
+/**
+ * @namespace Blocks
+ * @brief Provides easy access to block IDs and handles the bootstrap registration.
+ */
 namespace Blocks {
-    // Cached IDs for fast access
+    /** @name Global Block IDs
+     * Cached numeric identifiers for high-speed voxel access. These are 
+     * populated during the init() call.
+     * @{
+     */
     inline uint8_t AIR = 0;
     inline uint8_t DIRT = 0;
-    inline uint8_t GRASS = 0; // "Grass" typically refers to the short grass plant
-    inline uint8_t GRASS_BLOCK = 0;
+    inline uint8_t GRASS = 0; ///< The short grass plant entity.
+    inline uint8_t GRASS_BLOCK = 0; ///< The standard dirt block with grass on top.
     inline uint8_t STONE = 0;
     inline uint8_t OAK_LOG = 0;
     inline uint8_t OAK_LEAVES = 0;
@@ -29,21 +42,28 @@ namespace Blocks {
     inline uint8_t EMERALD_ORE = 0;
     inline uint8_t GRAVEL = 0;
     inline uint8_t BEDROCK = 0;
+    /** @} */
 
+    /**
+     * @brief Bootstraps the block system.
+     * 
+     * 1. Registers every block type in the BlockRegistry.
+     * 2. Captures the numeric IDs into global variables.
+     * 3. Resolves texture names into Layer IDs from the TextureManager.
+     */
     inline void init() {
         BlockRegistry& registry = BlockRegistry::getInstance();
         
-        // 0. AIR
+        // --- Registration Phase ---
+        
         AIR = registry.registerBlock(
             BlockBuilder("AIR").setTransparent().setTexture("air").build()
         );
 
-        // 1. DIRT
         DIRT = registry.registerBlock(
             BlockBuilder("DIRT").setSolid().setTexture("dirt").build()
         );
 
-        // 2. GRASS_BLOCK
         GRASS_BLOCK = registry.registerBlock(
             BlockBuilder("GRASS_BLOCK")
                 .setGrassPattern("grass_block_top", "dirt", "grass_block_side")
@@ -51,12 +71,10 @@ namespace Blocks {
                 .build()
         );
 
-        // 3. STONE
         STONE = registry.registerBlock(
             BlockBuilder("STONE").setSolid().setTexture("stone").build()
         );
 
-        // 4. OAK_LOG
         OAK_LOG = registry.registerBlock(
             BlockBuilder("LOG")
                 .setLogPattern("oak_log_top", "oak_log")
@@ -64,62 +82,50 @@ namespace Blocks {
                 .build()
         );
 
-        // 5. OAK_LEAVES
         OAK_LEAVES = registry.registerBlock(
             BlockBuilder("LEAVES").setLeaves().setTexture("oak_leaves").build()
         );
 
-        // 6. SHORT_GRASS (Plant)
         GRASS = registry.registerBlock(
             BlockBuilder("GRASS").setBillboard().setTexture("short_grass").build()
         );
 
-        // 7. TALL_GRASS_BOTTOM
         TALL_GRASS_BOTTOM = registry.registerBlock(
             BlockBuilder("TALL_GRASS_BOTTOM").setBillboard().setTexture("tall_grass_bottom").build()
         );
 
-        // 8. TALL_GRASS_TOP
         TALL_GRASS_TOP = registry.registerBlock(
             BlockBuilder("TALL_GRASS_TOP").setBillboard().setTexture("tall_grass_top").build()
         );
 
-        // 9. POPPY
         POPPY = registry.registerBlock(
             BlockBuilder("POPPY").setBillboard().setTexture("poppy").build()
         );
 
-        // 10. WHITE_TULIP
         WHITE_TULIP = registry.registerBlock(
             BlockBuilder("WHITE_TULIP").setBillboard().setTexture("white_tulip").build()
         );
 
-        // 11. PINK_TULIP
         PINK_TULIP = registry.registerBlock(
             BlockBuilder("PINK_TULIP").setBillboard().setTexture("pink_tulip").build()
         );
 
-        // 12. ORANGE_TULIP
         ORANGE_TULIP = registry.registerBlock(
             BlockBuilder("ORANGE_TULIP").setBillboard().setTexture("orange_tulip").build()
         );
 
-        // 13. WATER
         WATER = registry.registerBlock(
             BlockBuilder("WATER").setLiquid().setTexture("water_still").build()
         );
 
-        // 14. LAVA
         LAVA = registry.registerBlock(
             BlockBuilder("LAVA").setLiquid().setTexture("lava_still").build()
         );
 
-        // 15. SAND
         SAND = registry.registerBlock(
             BlockBuilder("SAND").setSolid().setTexture("sand").build()
         );
         
-        // 16. ORES
         COAL_ORE = registry.registerBlock(
             BlockBuilder("COAL_ORE").setSolid().setTexture("coal_ore").build()
         );
@@ -136,22 +142,21 @@ namespace Blocks {
             BlockBuilder("EMERALD_ORE").setSolid().setTexture("emerald_ore").build()
         );
 
-        // 17. GRAVEL
         GRAVEL = registry.registerBlock(
             BlockBuilder("GRAVEL").setSolid().setTexture("gravel").build()
         );
 
-        // 18. BEDROCK
         BEDROCK = registry.registerBlock(
             BlockBuilder("BEDROCK").setSolid().setTexture("bedrock").build()
         );
 
-        // After registration, resolve texture layers
+        // --- Resolution Phase ---
         TextureManager& tm = TextureManager::getInstance();
         for (const auto& block : registry.getAllBlocks()) {
-             // Access mutable block ref to set layers
              Block& b = registry.getBlockMutable(block.id);
              if (b.blockName == "AIR") continue;
+             
+             // Map string names to numeric texture indices
              b.topLayer = tm.getLayerIndex(b.topTexName);
              b.bottomLayer = tm.getLayerIndex(b.bottomTexName);
              b.sideLayer = tm.getLayerIndex(b.sideTexName);

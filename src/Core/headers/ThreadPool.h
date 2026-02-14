@@ -1,3 +1,8 @@
+/**
+ * @file ThreadPool.h
+ * @brief High-performance multithreaded task execution system.
+ */
+
 #pragma once
 
 #include <vector>
@@ -7,12 +12,40 @@
 #include <condition_variable>
 #include <functional>
 #include <atomic>
+#include <memory>
+#include <type_traits>
 
+/**
+ * @name CPU Cache Constants
+ * @{
+ */
+#ifdef __cpp_lib_hardware_interference_size
+    constexpr std::size_t CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
+#else
+    constexpr std::size_t CACHE_LINE_SIZE = 64; ///< Industry standard for modern x86/ARM CPUs.
+#endif
+/** @} */
+
+/**
+ * @class ThreadPool
+ * @brief A standard executor that manages a fixed set of worker threads and a shared task queue.
+ * 
+ * This class is designed for low latency and high throughput. It employs several 
+ * optimizations:
+ * 1. **False Sharing Prevention**: Critical atomic counters are aligned to separate cache lines.
+ * 2. **Lock-Free Fast Paths**: Idle checks and pending counts use relaxed atomic operations.
+ * 3. **Perfect Forwarding**: Tasks are forwarded into the queue to avoid redundant copies.
+ * 4. **Batch Submission**: Multiple tasks can be added in a single lock acquisition to reduce contention.
+ */
 class ThreadPool {
 public:
+    /**
+     * @brief Initializes the pool and spawns worker threads.
+     * @param numThreads Number of threads to create. If 0, defaults to hardware_concurrency - 1.
+     */
     explicit ThreadPool(size_t numThreads = 0)
-        : activeTasks(0), stopping(false) {
-        // Default to hardware concurrency minus 1 (leave one for main thread)
+        : activeTasks(0), stopping(false), taskCount(0) {
+
         if (numThreads == 0) {
             numThreads = std::max(1u, std::thread::hardware_concurrency() - 1);
         }
@@ -24,99 +57,184 @@ public:
         }
     }
 
+    /**
+     * @brief Destructor. Forces a shutdown of all threads.
+     */
     ~ThreadPool() {
         shutdown();
     }
 
-    // Delete copy and move operations
-    ThreadPool(const ThreadPool &) = delete;
+    // Disable copying and moving to ensure thread safety
+    ThreadPool(const ThreadPool&) = delete;
+    ThreadPool& operator=(const ThreadPool&) = delete;
+    ThreadPool(ThreadPool&&) = delete;
+    ThreadPool& operator=(ThreadPool&&) = delete;
 
-    ThreadPool &operator=(const ThreadPool &) = delete;
+    /**
+     * @brief Submits a singular task to the global queue.
+     * @tparam F Callable type.
+     * @param task The function to execute.
+     */
+    template<typename F>
+    void submit(F&& task) {
+        static_assert(std::is_invocable_v<F>, "Task must be callable with no arguments");
 
-    ThreadPool(ThreadPool &&) = delete;
-
-    ThreadPool &operator=(ThreadPool &&) = delete;
-
-    // Submit a task to the pool
-    template<class F>
-    void submit(F &&task) {
         {
             std::unique_lock<std::mutex> lock(queueMutex);
 
-            // Don't accept new tasks if stopping
-            if (stopping) {
+            if (stopping) [[unlikely]] {
                 return;
             }
 
             tasks.emplace(std::forward<F>(task));
+            taskCount.fetch_add(1, std::memory_order_relaxed);
         }
+
         condition.notify_one();
     }
 
-    // Batch submit multiple tasks (more efficient than individual submits)
-    template<class Iterator>
+    /**
+     * @brief Submits a range of tasks in a single batch.
+     * 
+     * This method is significantly faster than calling submit() in a loop because it 
+     * only acquires the queue mutex once for the entire range.
+     * 
+     * @tparam Iterator Iterator type for a container of callables.
+     * @param begin Start of range.
+     * @param end End of range (exclusive).
+     */
+    template<typename Iterator>
     void submitBatch(Iterator begin, Iterator end) {
+        if (begin == end) [[unlikely]] return;
+
+        size_t count = 0;
         {
             std::unique_lock<std::mutex> lock(queueMutex);
 
-            if (stopping) {
+            if (stopping) [[unlikely]] {
                 return;
             }
 
             for (auto it = begin; it != end; ++it) {
                 tasks.emplace(*it);
+                ++count;
             }
+
+            taskCount.fetch_add(count, std::memory_order_relaxed);
         }
 
-        // Notify all workers for batch processing
-        condition.notify_all();
+        // Adaptive Notification: Single notify_all is better if many tasks added
+        const size_t notifyCount = std::min(count, workers.size());
+        if (notifyCount >= workers.size() / 2) {
+            condition.notify_all();
+        } else {
+            for (size_t i = 0; i < notifyCount; ++i) {
+                condition.notify_one();
+            }
+        }
     }
 
-    // Wait for all pending tasks to complete
+    /**
+     * @brief Blocks the calling thread until all currently queued tasks are finished.
+     */
     void waitAll() {
+        if (isIdleFast()) [[likely]] {
+            return;
+        }
+
         std::unique_lock<std::mutex> lock(queueMutex);
         completionCondition.wait(lock, [this] {
             return tasks.empty() && activeTasks.load(std::memory_order_acquire) == 0;
         });
     }
 
-    // Wait with timeout (returns true if all tasks completed, false if timed out)
-    template<class Rep, class Period>
-    bool waitFor(const std::chrono::duration<Rep, Period> &timeout) {
+    /**
+     * @brief Blocks until either all tasks finish or the timeout is reached.
+     * @return true if all tasks finished, false if timed out.
+     */
+    template<typename Rep, typename Period>
+    bool waitFor(const std::chrono::duration<Rep, Period>& timeout) {
+        if (isIdleFast()) [[likely]] {
+            return true;
+        }
+
         std::unique_lock<std::mutex> lock(queueMutex);
         return completionCondition.wait_for(lock, timeout, [this] {
             return tasks.empty() && activeTasks.load(std::memory_order_acquire) == 0;
         });
     }
 
-    // Get number of pending tasks
-    size_t pendingTasks() const {
-        std::unique_lock<std::mutex> lock(queueMutex);
-        return tasks.size() + activeTasks.load(std::memory_order_relaxed);
+    /// @return Number of tasks currently in the queue but not yet being executed.
+    [[nodiscard]] size_t pendingTasks() const noexcept {
+        return taskCount.load(std::memory_order_relaxed);
     }
 
-    // Get number of worker threads
-    size_t workerCount() const {
+    /// @return The total number of worker threads in the pool.
+    [[nodiscard]] size_t workerCount() const noexcept {
         return workers.size();
     }
 
-    // Check if pool is idle (no pending or active tasks)
-    bool isIdle() const {
-        std::unique_lock<std::mutex> lock(queueMutex);
-        return tasks.empty() && activeTasks.load(std::memory_order_relaxed) == 0;
+    /// @return true if no tasks are queued and no threads are busy.
+    [[nodiscard]] bool isIdle() const noexcept {
+        return isIdleFast();
     }
 
-    // Clear all pending tasks (does not affect currently executing tasks)
+    /**
+     * @brief Discards all tasks currently waiting in the queue.
+     * Does NOT stop tasks already in progress.
+     */
     void clearPending() {
         std::unique_lock<std::mutex> lock(queueMutex);
 
-        // Efficiently clear the queue
-        std::queue<std::function<void()> > empty;
+        const size_t cleared = tasks.size();
+
+        std::queue<std::function<void()>> empty;
         std::swap(tasks, empty);
+
+        taskCount.fetch_sub(cleared, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Submits a task to the front of the queue, bypassing other pending tasks.
+     */
+    template<typename F>
+    void submitPriority(F&& task) {
+        static_assert(std::is_invocable_v<F>, "Task must be callable with no arguments");
+
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+
+            if (stopping) [[unlikely]] {
+                return;
+            }
+
+            std::queue<std::function<void()>> temp;
+            temp.emplace(std::forward<F>(task));
+
+            while (!tasks.empty()) {
+                temp.push(std::move(tasks.front()));
+                tasks.pop();
+            }
+
+            std::swap(tasks, temp);
+            taskCount.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        condition.notify_one();
     }
 
 private:
-    // Worker thread function
+    /**
+     * @brief A lock-free inspection of pool activity.
+     */
+    [[nodiscard]] bool isIdleFast() const noexcept {
+        return activeTasks.load(std::memory_order_relaxed) == 0 &&
+               taskCount.load(std::memory_order_relaxed) == 0;
+    }
+
+    /**
+     * @brief Internal loop executed by each worker thread.
+     */
     void workerThread() {
         while (true) {
             std::function<void()> task;
@@ -124,69 +242,126 @@ private:
             {
                 std::unique_lock<std::mutex> lock(queueMutex);
 
-                // Wait for task or stop signal
                 condition.wait(lock, [this] {
                     return stopping || !tasks.empty();
                 });
 
-                // Exit if stopping and no more tasks
-                if (stopping && tasks.empty()) {
+                if (stopping && tasks.empty()) [[unlikely]] {
                     return;
                 }
 
-                // Get task from queue
                 task = std::move(tasks.front());
                 tasks.pop();
-            }
 
-            // Execute task outside the lock
-            activeTasks.fetch_add(1, std::memory_order_release);
+                activeTasks.fetch_add(1, std::memory_order_relaxed);
+                taskCount.fetch_sub(1, std::memory_order_relaxed);
+            }
 
             try {
                 task();
             } catch (...) {
-                // Catch exceptions to prevent thread termination
-                // In production, you might want to log these
+                // Future: add logging or error reporter integration
             }
 
-            activeTasks.fetch_sub(1, std::memory_order_release);
+            // Signal task completion
+            const size_t activeCount = activeTasks.fetch_sub(1, std::memory_order_release);
 
-            // Notify completion (check if we're now idle)
-            if (activeTasks.load(std::memory_order_acquire) == 0) {
+            if (activeCount == 1) [[unlikely]] {
                 std::unique_lock<std::mutex> lock(queueMutex);
-                if (tasks.empty()) {
+                if (tasks.empty() && activeTasks.load(std::memory_order_acquire) == 0) {
                     completionCondition.notify_all();
                 }
             }
         }
     }
 
-    // Shutdown the thread pool
+    /**
+     * @brief Stops all threads. Blocks until they finish their CURRENT task.
+     */
     void shutdown() {
         {
             std::unique_lock<std::mutex> lock(queueMutex);
-            if (stopping) {
-                return; // Already stopped
+            if (stopping) [[unlikely]] {
+                return;
             }
             stopping = true;
         }
 
         condition.notify_all();
 
-        for (std::thread &worker: workers) {
+        for (std::thread& worker : workers) {
             if (worker.joinable()) {
                 worker.join();
             }
         }
     }
 
+    /** @name Thread-Safe Counters
+     * Counters are aligned to CACHE_LINE_SIZE to separate them into different 
+     * L1/L2 cache lines, preventing "False Sharing" performance degradation 
+     * on multi-socket or high-core-count systems.
+     * @{
+     */
+    alignas(CACHE_LINE_SIZE) std::atomic<size_t> activeTasks; ///< Number of tasks being executed right now.
+    alignas(CACHE_LINE_SIZE) std::atomic<size_t> taskCount;   ///< Total tasks queued + active.
+    /** @} */
+
+    /** @name Synchronization @{ */
+    std::queue<std::function<void()>> tasks; ///< FIFO task queue.
+    mutable std::mutex queueMutex; ///< Protects the tasks queue and stopping flag.
+    std::condition_variable condition; ///< Signals workers to wake up.
+    std::condition_variable completionCondition; ///< Signals when all work is drained (waitAll).
+    /** @} */
+
+    /** @name Thread Management @{ */
+    std::vector<std::thread> workers; ///< Set of durable consumer threads.
+    bool stopping; ///< Lifecycle flag.
+    /** @} */
+};
+
+/**
+ * @class WorkStealingThreadPool
+ * @brief An advanced thread pool where each worker has its own local queue.
+ * 
+ * Provides significantly better load balancing for heterogeneous workloads (tasks 
+ * with widely varying durations). When a thread finishes its local queue, it 
+ * "steals" work from another worker's queue.
+ * 
+ * Reduces synchronization contention vs. the global queue model.
+ */
+class WorkStealingThreadPool {
+public:
+    explicit WorkStealingThreadPool(size_t numThreads = 0);
+    ~WorkStealingThreadPool();
+
+    /**
+     * @brief Submits a task to a worker's local queue.
+     */
+    template<typename F>
+    void submit(F&& task);
+
+    /**
+     * @brief Blocks until all local and global queues are drained.
+     */
+    void waitAll();
+
+private:
+    /**
+     * @struct WorkerData
+     * @brief Container for per-thread local task storage.
+     */
+    struct alignas(CACHE_LINE_SIZE) WorkerData {
+        std::queue<std::function<void()>> localQueue;
+        std::mutex localMutex;
+        std::condition_variable localCondition;
+    };
+
+    std::vector<std::unique_ptr<WorkerData>> workerQueues;
     std::vector<std::thread> workers;
-    std::queue<std::function<void()> > tasks;
 
-    mutable std::mutex queueMutex;
-    std::condition_variable condition;
-    std::condition_variable completionCondition;
+    std::atomic<size_t> nextWorker{0};
+    std::atomic<bool> stopping{false};
 
-    std::atomic<size_t> activeTasks;
-    bool stopping;
+    void workerThread(size_t workerId);
+    bool tryStealWork(size_t thiefId);
 };

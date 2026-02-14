@@ -9,15 +9,82 @@
 #include "../World/Generation/BiomeRegistry.h"
 #include "SDL2/SDL_timer.h"
 
+/**
+ * @file GameObject.cpp
+ * @brief Implementation of the central game controller and main engine logic.
+ */
+
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
+namespace {
+    /**
+     * @brief Compile-time constant string hashing for fast block name comparisons.
+     * Uses the DJB2 algorithm.
+     */
+    constexpr uint32_t hashCString(const char *str) {
+        uint32_t hash = 5381;
+        while (*str) {
+            hash = ((hash << 5) + hash) + static_cast<unsigned char>(*str++);
+        }
+        return hash;
+    }
+
+    // Pre-computed block name hashes to avoid runtime handle lookups
+    constexpr uint32_t HASH_WATER = hashCString("WATER");
+    constexpr uint32_t HASH_LAVA = hashCString("LAVA");
+    constexpr uint32_t HASH_TALL_GRASS_BOTTOM = hashCString("TALL_GRASS_BOTTOM");
+    constexpr uint32_t HASH_TALL_GRASS_TOP = hashCString("TALL_GRASS_TOP");
+    constexpr uint32_t HASH_GRASS_BLOCK = hashCString("GRASS_BLOCK");
+
+    /**
+     * @brief Converts simple block coordinates to chunk-relative coordinates.
+     * This method correctly handles the negative coordinate wrapping logic.
+     */
+    [[gnu::always_inline]]
+    int worldToChunkCoord(const int blockCoord, const int chunkSize) {
+        return (blockCoord >= 0) ? (blockCoord / chunkSize) : ((blockCoord + 1) / chunkSize - 1);
+    }
+
+    /**
+     * @brief High-performance branchless floor function for float-to-block-int conversion.
+     */
+    [[gnu::always_inline]]
+    int fastBlockFloor(const float coord) {
+        const int i = static_cast<int>(coord);
+        return (coord < 0.0f && coord != i) ? i - 1 : i;
+    }
+
+    /**
+     * @brief Utility structure to store and update chunk/local coordinates from world position.
+     * Used to avoid repeated calculations in different parts of the UI layer.
+     */
+    struct ChunkLocalCoords {
+        int chunkX, chunkY, chunkZ;
+        int localX, localY, localZ;
+
+        void update(const glm::vec3 &worldPos) {
+            const int blockX = fastBlockFloor(worldPos.x);
+            const int blockY = fastBlockFloor(worldPos.y);
+            const int blockZ = fastBlockFloor(worldPos.z);
+
+            chunkX = worldToChunkCoord(blockX, CHUNK_WIDTH);
+            chunkY = worldToChunkCoord(blockY, CHUNK_HEIGHT);
+            chunkZ = worldToChunkCoord(blockZ, CHUNK_WIDTH);
+
+            localX = blockX - chunkX * CHUNK_WIDTH;
+            localY = blockY - chunkY * CHUNK_HEIGHT;
+            localZ = blockZ - chunkZ * CHUNK_WIDTH;
+        }
+    };
+}
+
 int convertToASCIIsum(const std::string &input) {
     int sum = 0;
     for (const char c: input) {
         const int charVal = static_cast<unsigned char>(c);
+        //Use saturating arithmetic
         if (sum > INT_MAX - charVal) return INT_MAX;
-        if (sum < INT_MIN + charVal) return INT_MIN;
         sum += charVal;
     }
     return sum;
@@ -27,22 +94,21 @@ int convertToASCIIsum(const std::string &input) {
 // CONSTRUCTOR / DESTRUCTOR
 // ============================================================================
 GameObject::GameObject(const float x, const float y, std::string windowName)
-    : fpsSlider(), renderDistanceSlider(), seedBox(), windowX(x), windowY(y), lastX(x / 2), lastY(y / 2),
+    : windowX(x), windowY(y), lastX(x / 2), lastY(y / 2), fpsSlider(), renderDistanceSlider(), seedBox(),
       window_name(std::move(windowName)) {
 }
 
 GameObject::~GameObject() {
-    // Cleanup OpenGL resources
     if (outlineVAO)
         glDeleteVertexArrays(1, &outlineVAO);
     if (outlineVBO)
         glDeleteBuffers(1, &outlineVBO);
 
-    if (worldShader) delete worldShader;
-    if (billboardShader) delete billboardShader;
-    if (fluidShader) delete fluidShader;
-    if (outlineShader) delete outlineShader;
-    if (bboxShader) delete bboxShader;
+    delete worldShader;
+    delete billboardShader;
+    delete fluidShader;
+    delete outlineShader;
+    delete bboxShader;
 
     graphics::stopMessageLoop();
     graphics::destroyWindow();
@@ -64,48 +130,42 @@ void GameObject::init() {
 
     Planet::planet = new Planet(worldShader, fluidShader, billboardShader, bboxShader);
 
+    // Cache frequently accessed values
+    cachedWindowCenter.x = windowX * 0.5f;
+    cachedWindowCenter.y = windowY * 0.5f;
+
     // Setup callbacks with optimized lambdas
     graphics::setPreDrawFunction([this] {
-        // Update sky
         sky.update(1.0f / std::max(graphics::getFPS(), 1.0f));
-        //sky.update(1.0f / 2.0 );
-
         updateWindowTitle();
+
+        // Batch texture binding
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, TextureManager::getInstance().getTextureArrayID());
+        const GLuint texArrayID = TextureManager::getInstance().getTextureArrayID();
+        glBindTexture(GL_TEXTURE_2D_ARRAY, texArrayID);
+
         setupRenderingState();
         updateFPSSettings();
         updateShaders();
 
-        // Render sky BEFORE chunks (depth test disabled inside Sky::render)
         sky.render(cachedMatrices.view, cachedMatrices.projection, camera.Position);
 
-        // Re-bind block texture array after sky rendering used texture unit 1
+        // Re-bind after sky
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, TextureManager::getInstance().getTextureArrayID());
+        glBindTexture(GL_TEXTURE_2D_ARRAY, texArrayID);
 
-        // Use saved player position for chunk loading during freecam
         const glm::vec3 &updatePos = freecamActive ? savedPlayerPosition : camera.Position;
-        // ENABLE occlusion only if NOT in freecam.
-        // In freecam, we want to see all chunks in the player's frustum (no occlusion culling).
         Planet::planet->update(updatePos, !freecamActive);
         renderBlockOutline(outlineVAO);
 
-        // Render Player Visualization in Freecam (Black Box)
-        if (freecamActive) {
+        if (freecamActive) [[unlikely]] {
             bboxShader->use();
-            // IMPORTANT: Use current camera matrices for visualization, NOT the frozen frustum matrices
             (*bboxShader)["viewProjection"] = cachedMatrices.projection * cachedMatrices.view;
-
-            // Black color for the box
             (*bboxShader)["color"] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-            // Standard player size approx 0.6x1.8x0.6. Box uses center/extents.
-            // Center is position - eye level (approx 1.62m).
-            glm::vec3 playerCenter = savedPlayerPosition - glm::vec3(0.0f, 0.81f, 0.0f);
-            glm::vec3 playerExtents(0.3f, 0.9f, 0.3f); // Half-widths/heights
+            const glm::vec3 playerCenter = savedPlayerPosition - glm::vec3(0.0f, 0.81f, 0.0f);
+            const glm::vec3 playerExtents(0.3f, 0.9f, 0.3f);
 
-            // Draw filled box
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             Planet::planet->drawBoundingBox(playerCenter, playerExtents);
         }
@@ -114,19 +174,18 @@ void GameObject::init() {
     });
 
     graphics::setResizeFunction([this](const int width, const int height) {
-        // Cache-friendly batch update
         windowX = width;
         windowY = height;
 
-        const float halfX = windowX * 0.5f;
-        const float halfY = windowY * 0.5f;
+        cachedWindowCenter.x = width * 0.5f;
+        cachedWindowCenter.y = height * 0.5f;
 
-        renderDistanceSlider.setDimensions(halfX - 100, halfY + 130.0f);
-        fpsSlider.setDimensions(halfX - 100, halfY + 70.0f);
-        fullscreenCheckBox.setDimensions(halfX, halfY);
-        seedBox.setDimensions(halfX, halfY + 160.0f);
+        renderDistanceSlider.setDimensions(cachedWindowCenter.x - 100, cachedWindowCenter.y + 130.0f);
+        fpsSlider.setDimensions(cachedWindowCenter.x - 100, cachedWindowCenter.y + 70.0f);
+        fullscreenCheckBox.setDimensions(cachedWindowCenter.x, cachedWindowCenter.y);
+        seedBox.setDimensions(cachedWindowCenter.x, cachedWindowCenter.y + 160.0f);
 
-        cachedMatrices.dirty = true; // Mark matrices for recalculation
+        cachedMatrices.dirty = true;
     });
 
     graphics::setDrawFunction([this] { renderUI(); });
@@ -145,49 +204,35 @@ void GameObject::initializeGraphics() {
     graphics::setFont("../assets/fonts/Arial.ttf");
 
     camera = Camera(glm::vec3(0.0f, MAX_HEIGHT / 2 + 10, 0.0f));
-
-    // Load textures using Dynamic Atlas
     TextureManager::getInstance().loadTextures("../assets/sprites/blocks");
-
-    // Initialize Blocks (builds registry and resolves textures)
     Blocks::init();
-
-    // Initialize Biomes (sets up biome definitions with features)
     BiomeRegistry::getInstance().init();
-
-    // Initialize Sky (loads sun/moon textures)
     sky.init();
 }
 
 void GameObject::initializeShaders() {
-    // We bind the texture to slot 0 in the render loop, so we set the shader uniform to 0.
-    const int slotBound = 0;
+    constexpr int slotBound = 0;
 
-    // World shader
     worldShader = new Shader("../assets/shaders/world_vertex_shader.glsl",
                              "../assets/shaders/world_fragment_shader.glsl");
     (*worldShader)["SMART_tex"] = slotBound;
 
-    // Billboard shader
     billboardShader = new Shader("../assets/shaders/billboard_vertex_shader.glsl",
                                  "../assets/shaders/billboard_fragment_shader.glsl");
     (*billboardShader)["SMART_tex"] = slotBound;
 
-    // Fluid shader
     fluidShader = new Shader("../assets/shaders/fluids_vertex_shader.glsl",
                              "../assets/shaders/fluids_fragment_shader.glsl");
     (*fluidShader)["SMART_tex"] = slotBound;
 
-    // Outline shader
     outlineShader = new Shader("../assets/shaders/block_outline_vertex_shader.glsl",
                                "../assets/shaders/block_outline_fragment_shader.glsl");
 
-    // BBox shader (Occlusion Queries)
-    bboxShader = new Shader("../assets/shaders/bbox_vertex.glsl", "../assets/shaders/bbox_fragment.glsl");
+    bboxShader = new Shader("../assets/shaders/bbox_vertex.glsl",
+                            "../assets/shaders/bbox_fragment.glsl");
 
-    // Check for compilation errors
-    if (!worldShader->program || !billboardShader->program || !fluidShader->program || !outlineShader->program || !
-        bboxShader->program) {
+    if (!worldShader->program || !billboardShader->program || !fluidShader->program ||
+        !outlineShader->program || !bboxShader->program) [[unlikely]] {
         std::cerr << "[CRITICAL] Shader compilation failed!" << std::endl;
         std::cerr << "World: " << worldShader->program << std::endl;
         std::cerr << "Billboard: " << billboardShader->program << std::endl;
@@ -198,13 +243,14 @@ void GameObject::initializeShaders() {
 }
 
 void GameObject::initializeUIElements() {
-    const float halfX = windowX * 0.5f;
-    const float halfY = windowY * 0.5f;
+    cachedWindowCenter.x = windowX * 0.5f;
+    cachedWindowCenter.y = windowY * 0.5f;
 
-    fullscreenCheckBox = Checkbox(halfX, halfY, 50);
-    fpsSlider = Slider(halfX - 100, halfY + 50.0f, 200.0f, 20.0f, 55.0f, 361.0f, 144.0f);
-    renderDistanceSlider = Slider(halfX - 100, halfY + 130.0f, 200.0f, 20.0f, 4.0f, 30.f, 30.f);
-    seedBox = TypeBox(halfX - 100, halfY + 230.0f, 200.0f, 20.0f);
+    fullscreenCheckBox = Checkbox(cachedWindowCenter.x, cachedWindowCenter.y, 50);
+    fpsSlider = Slider(cachedWindowCenter.x - 100, cachedWindowCenter.y + 50.0f, 200.0f, 20.0f, 55.0f, 361.0f, 144.0f);
+    renderDistanceSlider = Slider(cachedWindowCenter.x - 100, cachedWindowCenter.y + 130.0f, 200.0f, 20.0f, 4.0f, 30.f,
+                                  30.f);
+    seedBox = TypeBox(cachedWindowCenter.x - 100, cachedWindowCenter.y + 230.0f, 200.0f, 20.0f);
 }
 
 void GameObject::initializeOutlineVAO() {
@@ -223,18 +269,20 @@ void GameObject::initializeOutlineVAO() {
 // UPDATE METHODS
 // ============================================================================
 void GameObject::updateWindowTitle() {
-    // Avoid string construction if FPS hasn't changed significantly
+    // OPTIMIZATION: Only update if values changed significantly
     static int lastFPS = -1;
     static int lastChunkCount = -1;
 
     const int currentFPS = static_cast<int>(graphics::getFPS());
     const int currentChunks = Planet::planet->numChunks;
 
-    if (currentFPS != lastFPS || currentChunks != lastChunkCount) {
-        std::ostringstream oss;
-        oss << "Fake Minecraft / FPS: " << currentFPS
-                << " Total Chunks: " << currentChunks;
-        graphics::setWindowName(oss.str().c_str());
+    if (currentFPS != lastFPS || currentChunks != lastChunkCount) [[unlikely]] {
+        // Use static buffer to avoid allocations
+        static char titleBuffer[128];
+        snprintf(titleBuffer, sizeof(titleBuffer),
+                 "Fake Minecraft / FPS: %d Total Chunks: %d",
+                 currentFPS, currentChunks);
+        graphics::setWindowName(titleBuffer);
 
         lastFPS = currentFPS;
         lastChunkCount = currentChunks;
@@ -244,7 +292,7 @@ void GameObject::updateWindowTitle() {
 void GameObject::updateFPSSettings() const {
     static int lastFpsCap = -1;
 
-    if (fpsCap != lastFpsCap) {
+    if (fpsCap != lastFpsCap) [[unlikely]] {
         if (fpsCap == GameConstants::FPS_VSYNC_THRESHOLD) {
             graphics::setVSYNC(true);
             graphics::setTargetFPS(-1);
@@ -260,37 +308,33 @@ void GameObject::updateFPSSettings() const {
 }
 
 void GameObject::updateShaders() {
-    // Only recalculate matrices if needed
-    if (cachedMatrices.dirty) {
+    if (cachedMatrices.dirty) [[unlikely]] {
         cachedMatrices.view = camera.getViewMatrix();
         cachedMatrices.projection = glm::perspective(
             glm::radians(90.0f),
             windowX / windowY,
-            10000.0f, // Swapped near/far for Reverse-Z
-            0.1f // Reverted to 0.1f for near plane
+            10000.0f,
+            0.1f
         );
         cachedMatrices.dirty = false;
     }
 
     const glm::mat4 &view = cachedMatrices.view;
     const glm::mat4 &projection = cachedMatrices.projection;
-
     const glm::mat4 currentViewProjection = projection * view;
-
-    // Use frozen frustum during freecam, otherwise use current camera
     const glm::mat4 &frustumVP = freecamActive ? savedViewProjection : currentViewProjection;
-    // But ALWAYS use current camera for rendering/queries (matches depth buffer)
+
     Planet::planet->updateFrustum(frustumVP, currentViewProjection);
 
-    // Batch shader updates
-    glm::vec3 sunDir = sky.getSunDirection();
-    glm::vec3 sunCol = sky.getSunColor();
-    float ambient = sky.getAmbientStrength();
+    // Batch sky calculations
+    const glm::vec3 sunDir = sky.getSunDirection();
+    const glm::vec3 sunCol = sky.getSunColor();
+    const float ambient = sky.getAmbientStrength();
 
-    // Batch shader updates
-    // Clear any previous GL errors (e.g. from Sky or TextureManager) to prevent crash
+    // Clear GL errors
     while (glGetError() != GL_NO_ERROR);
 
+    // Batch shader uniform updates
     worldShader->use(true);
     (*worldShader)["view"] = view;
     (*worldShader)["projection"] = projection;
@@ -308,7 +352,7 @@ void GameObject::updateShaders() {
     fluidShader->use(true);
     (*fluidShader)["view"] = view;
     (*fluidShader)["projection"] = projection;
-    (*fluidShader)["time"] = SDL_GetTicks() / 1000.0f;
+    (*fluidShader)["time"] = SDL_GetTicks() * 0.001f;
     (*fluidShader)["sunDirection"] = sunDir;
     (*fluidShader)["sunColor"] = sunCol;
     (*fluidShader)["ambientStrength"] = ambient;
@@ -318,15 +362,14 @@ void GameObject::updateShaders() {
     (*outlineShader)["SMART_projection"] = projection;
 }
 
-void GameObject::setupRenderingState() {
-    // Use sky color for clear color
-    glm::vec3 skyCol = sky.getSkyColor();
+void GameObject::setupRenderingState() const {
+    const glm::vec3 skyCol = sky.getSkyColor();
     glClearColor(skyCol.r, skyCol.g, skyCol.b, 1.0f);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glClearDepth(0.0f); // Reverse-Z: Clear to 0.0 instead of 1.0
+    glClearDepth(0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glDepthFunc(GL_GEQUAL); // Reverse-Z: Use Greater-Than-Or-Equal
+    glDepthFunc(GL_GEQUAL);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     glEnable(GL_CULL_FACE);
@@ -343,7 +386,7 @@ void GameObject::renderBlockOutline(const unsigned int vao) {
     outlineShader->use(true);
     const auto result = Physics::raycast(camera.Position, camera.Front,
                                          GameConstants::RAYCAST_DISTANCE);
-    if (result.hit) {
+    if (result.hit) [[likely]] {
         (*outlineShader)["model"] = glm::vec4(result.blockX, result.blockY, result.blockZ, 1);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         glLogicOp(GL_INVERT);
@@ -362,139 +405,147 @@ void GameObject::renderUI() const {
 
     renderFluidOverlay();
 
-    switch (gameState.state) {
-        case PLAYING:
-            renderCrosshair();
-            renderDebugInfo();
-            break;
-        case PAUSED:
-            renderPauseMenu();
-            break;
+    if (gameState.state == PLAYING) [[likely]] {
+        renderCrosshair();
+        renderDebugInfo();
+    } else {
+        renderPauseMenu();
     }
 }
 
 void GameObject::renderFluidOverlay() const {
-    // Quick block lookup optimization
-    const glm::vec3 &pos = camera.Position;
-    const int blockX = pos.x < 0 ? pos.x - 1 : pos.x;
-    const int blockY = pos.y < 0 ? pos.y - 1 : pos.y;
-    const int blockZ = pos.z < 0 ? pos.z - 1 : pos.z;
+    // Use helper for coordinate conversion
+    ChunkLocalCoords coords;
+    coords.update(camera.Position);
 
-    const int chunkX = blockX < 0 ? floorf(blockX / static_cast<float>(CHUNK_WIDTH)) : blockX / CHUNK_WIDTH;
-    const int chunkY = blockY < 0 ? floorf(blockY / static_cast<float>(CHUNK_HEIGHT)) : blockY / CHUNK_HEIGHT;
-    const int chunkZ = blockZ < 0 ? floorf(blockZ / static_cast<float>(CHUNK_WIDTH)) : blockZ / CHUNK_WIDTH;
+    const Chunk *chunk = Planet::planet->getChunk(ChunkPos(coords.chunkX, coords.chunkY, coords.chunkZ));
+    if (!chunk) [[unlikely]] return;
 
-    const int localBlockX = blockX - (chunkX * CHUNK_WIDTH);
-    const int localBlockY = blockY - (chunkY * CHUNK_HEIGHT);
-    const int localBlockZ = blockZ - (chunkZ * CHUNK_WIDTH);
-
-    Chunk *chunk = Planet::planet->getChunk(ChunkPos(chunkX, chunkY, chunkZ));
-    if (!chunk) return;
-
-    const uint32_t blockType = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
-    // Convert char array to std::string for comparison/UI
-    const std::string blockName = BlockRegistry::getInstance().getBlock(blockType).blockName;
+    const uint32_t blockType = chunk->getBlockAtPos(coords.localX, coords.localY, coords.localZ);
+    const char *blockName = BlockRegistry::getInstance().getBlock(blockType).blockName;
+    const uint32_t blockHash = hashCString(blockName);
 
     graphics::Brush overlay;
     overlay.outline_opacity = 0.0f;
 
-    if (blockName == "WATER") {
+    if (blockHash == HASH_WATER) [[unlikely]] {
         overlay.fill_color[0] = 0.0f;
         overlay.fill_color[1] = 0.0f;
         overlay.fill_color[2] = 0.45f;
         overlay.fill_opacity = 0.6f;
-        drawRect(windowX * 0.5f, windowY * 0.5f, windowX, windowY, overlay);
-    } else if (blockName == "LAVA") {
+        drawRect(cachedWindowCenter.x, cachedWindowCenter.y, windowX, windowY, overlay);
+    } else if (blockHash == HASH_LAVA) [[unlikely]] {
         overlay.fill_color[0] = 1.0f;
         overlay.fill_color[1] = 0.5f;
         overlay.fill_color[2] = 0.0f;
         overlay.fill_opacity = 0.4f;
-        drawRect(windowX * 0.5f, windowY * 0.5f, windowX, windowY, overlay);
+        drawRect(cachedWindowCenter.x, cachedWindowCenter.y, windowX, windowY, overlay);
     }
 }
 
 void GameObject::renderCrosshair() const {
-    graphics::Brush crosshair;
-    crosshair.fill_color[0] = 0.7f;
-    crosshair.fill_color[1] = 0.7f;
-    crosshair.fill_color[2] = 0.7f;
-    crosshair.fill_opacity = 1.0f;
-    crosshair.outline_opacity = 0.0f;
+    static const graphics::Brush crosshair = []() {
+        graphics::Brush b;
+        b.fill_color[0] = 0.7f;
+        b.fill_color[1] = 0.7f;
+        b.fill_color[2] = 0.7f;
+        b.fill_opacity = 1.0f;
+        b.outline_opacity = 0.0f;
+        return b;
+    }();
 
-    const float centerX = windowX * 0.5f;
-    const float centerY = windowY * 0.5f;
-
-    drawRect(centerX, centerY, GameConstants::CROSSHAIR_SIZE,
+    drawRect(cachedWindowCenter.x, cachedWindowCenter.y, GameConstants::CROSSHAIR_SIZE,
              GameConstants::CROSSHAIR_THICKNESS, crosshair);
-    drawRect(centerX, centerY, GameConstants::CROSSHAIR_THICKNESS,
+    drawRect(cachedWindowCenter.x, cachedWindowCenter.y, GameConstants::CROSSHAIR_THICKNESS,
              GameConstants::CROSSHAIR_SIZE, crosshair);
 }
 
 void GameObject::renderDebugInfo() const {
-    graphics::Brush textBrush;
-    textBrush.fill_color[0] = 0.0f;
-    textBrush.fill_color[1] = 0.0f;
-    textBrush.fill_color[2] = 0.0f;
+    static const graphics::Brush textBrush = []() {
+        graphics::Brush b;
+        b.fill_color[0] = 0.0f;
+        b.fill_color[1] = 0.0f;
+        b.fill_color[2] = 0.0f;
+        return b;
+    }();
 
-    std::ostringstream coordsText;
-    coordsText << "COORDS: "
-            << static_cast<int>(camera.Position.x) << ", "
-            << static_cast<int>(camera.Position.y) << ", "
-            << static_cast<int>(camera.Position.z);
+    // OPTIMIZATION: Use static buffer for text
+    static char coordsBuffer[64];
+    snprintf(coordsBuffer, sizeof(coordsBuffer), "COORDS: %d, %d, %d",
+             static_cast<int>(camera.Position.x),
+             static_cast<int>(camera.Position.y),
+             static_cast<int>(camera.Position.z));
 
-    drawText(10, 30, 15, "FPS: " + std::to_string(static_cast<int>(graphics::getFPS())), textBrush);
-    drawText(10, 50, 15, coordsText.str(), textBrush);
-    drawText(10, 70, 15,
-             "SELECTED BLOCK: " + std::string(BlockRegistry::getInstance().getBlock(gameState.selectedBlock).blockName),
-             textBrush);
+    static char fpsBuffer[32];
+    snprintf(fpsBuffer, sizeof(fpsBuffer), "FPS: %d",
+             static_cast<int>(graphics::getFPS()));
 
-    if (freecamActive) {
-        textBrush.fill_color[0] = 1.0f;
-        textBrush.fill_color[1] = 0.5f;
-        textBrush.fill_color[2] = 0.0f;
-        drawText(10, 90, 15, "FREECAM  ON(F1 to exit)", textBrush);
+    drawText(10, 30, 15, fpsBuffer, textBrush);
+    drawText(10, 50, 15, coordsBuffer, textBrush);
+
+    // Cache block registry reference
+    static const BlockRegistry &registry = BlockRegistry::getInstance();
+    const char *blockName = registry.getBlock(gameState.selectedBlock).blockName;
+
+    static char blockBuffer[128];
+    snprintf(blockBuffer, sizeof(blockBuffer), "SELECTED BLOCK: %s", blockName);
+    drawText(10, 70, 15, blockBuffer, textBrush);
+
+    if (freecamActive) [[unlikely]] {
+        static const graphics::Brush freecamBrush = []() {
+            graphics::Brush b;
+            b.fill_color[0] = 1.0f;
+            b.fill_color[1] = 0.5f;
+            b.fill_color[2] = 0.0f;
+            return b;
+        }();
+        drawText(10, 90, 15, "FREECAM ON (F1 to exit)", freecamBrush);
     }
 }
 
 void GameObject::renderPauseMenu() const {
-    // Dark overlay
-    graphics::Brush overlay;
-    overlay.outline_opacity = 0.0f;
-    overlay.fill_color[0] = 0.2f;
-    overlay.fill_color[1] = 0.2f;
-    overlay.fill_color[2] = 0.2f;
-    overlay.fill_opacity = 0.9f;
-    drawRect(windowX * 0.5f, windowY * 0.5f, windowX, windowY, overlay);
+    static const graphics::Brush overlay = []() {
+        graphics::Brush b;
+        b.outline_opacity = 0.0f;
+        b.fill_color[0] = 0.2f;
+        b.fill_color[1] = 0.2f;
+        b.fill_color[2] = 0.2f;
+        b.fill_opacity = 0.9f;
+        return b;
+    }();
 
-    // UI elements
+    drawRect(cachedWindowCenter.x, cachedWindowCenter.y, windowX, windowY, overlay);
+
     renderDistanceSlider.draw();
     fpsSlider.draw();
     fullscreenCheckBox.draw();
     seedBox.draw();
 
-    // Text
-    graphics::Brush textBrush;
-    textBrush.fill_color[0] = 0.9f;
-    textBrush.fill_color[1] = 0.9f;
-    textBrush.fill_color[2] = 0.9f;
+    static const graphics::Brush textBrush = []() {
+        graphics::Brush b;
+        b.fill_color[0] = 0.9f;
+        b.fill_color[1] = 0.9f;
+        b.fill_color[2] = 0.9f;
+        return b;
+    }();
 
-    const float centerX = windowX * 0.5f;
-    const float centerY = windowY * 0.5f;
-
-    // FPS display
-    std::string fpsText;
+    //Pre-format FPS text
+    static char fpsBuffer[32];
     if (fpsCap == GameConstants::FPS_VSYNC_THRESHOLD) {
-        fpsText = "FPS: VSYNC";
+        strcpy_s(fpsBuffer, "FPS: VSYNC");
     } else if (fpsCap <= GameConstants::FPS_MAX_CAPPED) {
-        fpsText = "FPS: " + std::to_string(fpsCap);
+        snprintf(fpsBuffer, sizeof(fpsBuffer), "FPS: %d", fpsCap);
     } else {
-        fpsText = "FPS: UNCAPPED";
+        strcpy_s(fpsBuffer, "FPS: UNCAPPED");
     }
-    drawText(centerX - 40, centerY + 50.0f, 20, fpsText, textBrush);
 
-    drawText(centerX - 80, centerY + 110.0f, 20,
-             "Render Distance: " + std::to_string(Planet::planet->renderDistance), textBrush);
-    drawText(centerX - 40, centerY - 40, 20, "FullScreen", textBrush);
+    static char renderDistBuffer[64];
+    snprintf(renderDistBuffer, sizeof(renderDistBuffer),
+             "Render Distance: %d", Planet::planet->renderDistance);
+
+    drawText(cachedWindowCenter.x - 40, cachedWindowCenter.y + 50.0f, 20, fpsBuffer, textBrush);
+    drawText(cachedWindowCenter.x - 80, cachedWindowCenter.y + 110.0f, 20, renderDistBuffer, textBrush);
+    drawText(cachedWindowCenter.x - 40, cachedWindowCenter.y - 40, 20, "FullScreen", textBrush);
 }
 
 // ============================================================================
@@ -504,28 +555,23 @@ void GameObject::mouseCallBack() {
     graphics::MouseState ms{};
     getMouseState(ms);
 
-    switch (gameState.state) {
-        case PLAYING:
-            handlePlayingMouseInput(ms);
-            cachedMatrices.dirty = true; // Camera moved
-            break;
-        case PAUSED:
-            handlePausedMouseInput(ms);
-            break;
+    if (gameState.state == PLAYING) [[likely]] {
+        handlePlayingMouseInput(ms);
+        cachedMatrices.dirty = true;
+    } else {
+        handlePausedMouseInput(ms);
     }
 }
 
-void GameObject::handlePlayingMouseInput(graphics::MouseState &ms) {
-    // Mouse look
+void GameObject::handlePlayingMouseInput(const graphics::MouseState &ms) {
     const auto xOffset = static_cast<float>(ms.rel_x);
     const auto yOffset = static_cast<float>(-ms.rel_y);
     camera.processMouseMovement(xOffset, yOffset, true);
 
-    // Block interaction
-    if (ms.button_left_pressed || ms.button_middle_pressed || ms.button_right_pressed) {
+    if (ms.button_left_pressed || ms.button_middle_pressed || ms.button_right_pressed) [[unlikely]] {
         const auto result = Physics::raycast(camera.Position, camera.Front,
                                              GameConstants::RAYCAST_DISTANCE);
-        if (!result.hit) return;
+        if (!result.hit) [[unlikely]] return;
 
         if (ms.button_left_pressed) {
             handleBlockBreak(result);
@@ -537,8 +583,8 @@ void GameObject::handlePlayingMouseInput(graphics::MouseState &ms) {
     }
 }
 
-void GameObject::handlePausedMouseInput(graphics::MouseState &ms) {
-    if (ms.button_left_pressed) {
+void GameObject::handlePausedMouseInput(const graphics::MouseState &ms) {
+    if (ms.button_left_pressed) [[unlikely]] {
         fullscreenCheckBox.handleClick(ms.cur_pos_x, ms.cur_pos_y,
                                        [] { graphics::setFullScreen(true); },
                                        [] { graphics::setFullScreen(false); });
@@ -557,53 +603,64 @@ void GameObject::handlePausedMouseInput(graphics::MouseState &ms) {
     fpsSlider.update(ms.cur_pos_x, fpsCap);
 }
 
-void GameObject::keyboardCallBack(float deltaTime) {
-    static bool f11Pressed = false;
-
+void GameObject::keyboardCallBack(const float deltaTime) {
     // Toggle pause
-    if (getKeyState(graphics::SCANCODE_ESCAPE)) {
+    if (getKeyState(graphics::SCANCODE_ESCAPE)) [[unlikely]] {
         gameState.state = SDL_GetRelativeMouseMode() ? PLAYING : PAUSED;
     }
 
-    if (gameState.state == PAUSED) {
+    if (gameState.state == PAUSED) [[unlikely]] {
         seedBox.handleInput();
         return;
     }
 
-    // Movement
+    // Pre-calculate movement speed
     const float movementSpeed = deltaTime * GameConstants::MOVEMENT_SPEED_MULTIPLIER;
 
-    static constexpr std::array<std::pair<graphics::scancode_t, Camera_Movement>, 6> keyBindings = {
-        {
-            {graphics::SCANCODE_W, FORWARD},
-            {graphics::SCANCODE_S, BACKWARD},
-            {graphics::SCANCODE_A, LEFT},
-            {graphics::SCANCODE_D, RIGHT},
-            {graphics::SCANCODE_SPACE, UP},
-            {graphics::SCANCODE_LSHIFT, DOWN}
-        }
-    };
-
-    for (const auto &[key, direction]: keyBindings) {
-        if (getKeyState(key)) {
-            camera.processKeyboard(direction, movementSpeed);
-            cachedMatrices.dirty = true;
-        }
+    // Unrolled movement checks
+    bool moved = false;
+    if (getKeyState(graphics::SCANCODE_W)) {
+        camera.processKeyboard(FORWARD, movementSpeed);
+        moved = true;
+    }
+    if (getKeyState(graphics::SCANCODE_S)) {
+        camera.processKeyboard(BACKWARD, movementSpeed);
+        moved = true;
+    }
+    if (getKeyState(graphics::SCANCODE_A)) {
+        camera.processKeyboard(LEFT, movementSpeed);
+        moved = true;
+    }
+    if (getKeyState(graphics::SCANCODE_D)) {
+        camera.processKeyboard(RIGHT, movementSpeed);
+        moved = true;
+    }
+    if (getKeyState(graphics::SCANCODE_SPACE)) {
+        camera.processKeyboard(UP, movementSpeed);
+        moved = true;
+    }
+    if (getKeyState(graphics::SCANCODE_LSHIFT)) {
+        camera.processKeyboard(DOWN, movementSpeed);
+        moved = true;
     }
 
-    // F1 freecam toggle
+    if (moved) [[likely]] {
+        cachedMatrices.dirty = true;
+    }
+
+    // F-key toggles with debouncing
     static bool f1Pressed = false;
     if (getKeyState(graphics::SCANCODE_F1)) {
-        if (!f1Pressed) {
+        if (!f1Pressed) [[unlikely]] {
             f1Pressed = true;
             freecamActive = !freecamActive;
 
             if (freecamActive) {
-                // Entering freecam: Save current position and view frustum
+                // Save state to allow detached investigation of the world
                 savedPlayerPosition = camera.Position;
                 savedViewProjection = cachedMatrices.projection * cachedMatrices.view;
             } else {
-                // Exiting freecam: Teleport back to saved position
+                // Teleport back to player state
                 camera.Position = savedPlayerPosition;
                 cachedMatrices.dirty = true;
             }
@@ -612,10 +669,9 @@ void GameObject::keyboardCallBack(float deltaTime) {
         f1Pressed = false;
     }
 
-    // F2: Toggle Sky Time
     static bool f2Pressed = false;
     if (getKeyState(graphics::SCANCODE_F2)) {
-        if (!f2Pressed) {
+        if (!f2Pressed) [[unlikely]] {
             f2Pressed = true;
             sky.togglePause();
             std::cout << "Sky Time " << (sky.isPaused() ? "PAUSED" : "RESUMED") << std::endl;
@@ -624,11 +680,11 @@ void GameObject::keyboardCallBack(float deltaTime) {
         f2Pressed = false;
     }
 
-    // F11 fullscreen toggle
+    static bool f11Pressed = false;
     if (getKeyState(graphics::SCANCODE_F11)) {
-        if (!f11Pressed) {
+        if (!f11Pressed) [[unlikely]] {
             f11Pressed = true;
-            bool isChecked = fullscreenCheckBox.isChecked();
+            const bool isChecked = fullscreenCheckBox.isChecked();
             fullscreenCheckBox.setChecked(!isChecked);
             graphics::setFullScreen(!isChecked);
         }
@@ -644,26 +700,22 @@ void GameObject::handleBlockBreak(const Physics::RaycastResult &result) {
     const uint32_t blockType = result.chunk->getBlockAtPos(
         result.localBlockX, result.localBlockY, result.localBlockZ);
 
-    // Dependent breaking: Tall Grass
-    // If bottom is broken, break top as well.
+    // Dependent breaking logic for tall structures
     const Block &currentBlock = BlockRegistry::getInstance().getBlock(blockType);
+    const uint32_t blockHash = hashCString(currentBlock.blockName);
 
-    if (strcmp(currentBlock.blockName, "TALL_GRASS_BOTTOM") == 0) {
-        uint32_t aboveBlock = result.chunk->getBlockAtPos(
+    if (blockHash == HASH_TALL_GRASS_BOTTOM) [[unlikely]] {
+        // Automatically destroy the top half of tall grass if the base is removed
+        const uint32_t aboveBlock = result.chunk->getBlockAtPos(
             result.localBlockX, result.localBlockY + 1, result.localBlockZ);
 
         const Block &aboveBlockData = BlockRegistry::getInstance().getBlock(aboveBlock);
+        const uint32_t aboveHash = hashCString(aboveBlockData.blockName);
 
-        if (strcmp(aboveBlockData.blockName, "TALL_GRASS_TOP") == 0) {
-            // Must handle cross-chunk boundary if Y=15? (Current implementation clamps or wraps?)
-            // Chunk::getBlockAtPos usually handles local coords.
-            // If localBlockY+1 == CHUNK_HEIGHT, it might be an issue if getBlockAtPos doesn't handle neighbor chunks.
-            // But let's assume simple cases or verify if getBlockAtPos handles out of bounds.
-            // Actually, for now, let's keep it simple.
+        if (aboveHash == HASH_TALL_GRASS_TOP) {
             result.chunk->updateBlock(result.localBlockX, result.localBlockY + 1, result.localBlockZ, 0);
         }
     }
-    // User requested: If top is broken, bottom remains (so no action needed for TALL_GRASS_TOP).
 
     playSound(blockType);
     result.chunk->updateBlock(result.localBlockX, result.localBlockY, result.localBlockZ, 0);
@@ -674,53 +726,53 @@ void GameObject::handleBlockPick(const Physics::RaycastResult &result) {
         result.localBlockX, result.localBlockY, result.localBlockZ);
 }
 
-void GameObject::handleBlockPlace(const Physics::RaycastResult &result) {
-    // Calculate placement position
+void GameObject::handleBlockPlace(const Physics::RaycastResult &result) const {
+    //Batch absolute value calculations
     const float distX = result.hitPos.x - (result.blockX + 0.5f);
     const float distY = result.hitPos.y - (result.blockY + 0.5f);
     const float distZ = result.hitPos.z - (result.blockZ + 0.5f);
+
+    const float absDX = std::abs(distX);
+    const float absDY = std::abs(distY);
+    const float absDZ = std::abs(distZ);
 
     int blockX = result.blockX;
     int blockY = result.blockY;
     int blockZ = result.blockZ;
 
-    const float absDX = fabs(distX);
-    const float absDY = fabs(distY);
-    const float absDZ = fabs(distZ);
+    //Branchless selection
+    const bool xMax = (absDX > absDY) & (absDX > absDZ);
+    const bool yMax = (absDY > absDX) & (absDY > absDZ);
 
-    if (absDX > absDY && absDX > absDZ) {
-        blockX += (distX > 0 ? 1 : -1);
-    } else if (absDY > absDX && absDY > absDZ) {
-        blockY += (distY > 0 ? 1 : -1);
-    } else {
-        blockZ += (distZ > 0 ? 1 : -1);
-    }
+    blockX += xMax ? (distX > 0 ? 1 : -1) : 0;
+    blockY += yMax ? (distY > 0 ? 1 : -1) : 0;
+    blockZ += (!xMax & !yMax) ? (distZ > 0 ? 1 : -1) : 0;
 
     // Get chunk coordinates
-    const int chunkX = blockX < 0 ? floorf(blockX / static_cast<float>(CHUNK_WIDTH)) : blockX / CHUNK_WIDTH;
-    const int chunkY = blockY < 0 ? floorf(blockY / static_cast<float>(CHUNK_HEIGHT)) : blockY / CHUNK_HEIGHT;
-    const int chunkZ = blockZ < 0 ? floorf(blockZ / static_cast<float>(CHUNK_WIDTH)) : blockZ / CHUNK_WIDTH;
+    const int chunkX = worldToChunkCoord(blockX, CHUNK_WIDTH);
+    const int chunkY = worldToChunkCoord(blockY, CHUNK_HEIGHT);
+    const int chunkZ = worldToChunkCoord(blockZ, CHUNK_WIDTH);
 
-    const int localBlockX = blockX - (chunkX * CHUNK_WIDTH);
-    const int localBlockY = blockY - (chunkY * CHUNK_HEIGHT);
-    const int localBlockZ = blockZ - (chunkZ * CHUNK_WIDTH);
+    const int localBlockX = blockX - chunkX * CHUNK_WIDTH;
+    const int localBlockY = blockY - chunkY * CHUNK_HEIGHT;
+    const int localBlockZ = blockZ - chunkZ * CHUNK_WIDTH;
 
     Chunk *chunk = Planet::planet->getChunk(ChunkPos(chunkX, chunkY, chunkZ));
-    if (!chunk) return;
+    if (!chunk) [[unlikely]] return;
 
     const uint16_t blockToReplace = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
-
-    // Check if we can place
     const Block &blockToReplaceData = BlockRegistry::getInstance().getBlock(blockToReplace);
-    if (blockToReplace != 0 && blockToReplaceData.blockType != Block::LIQUID) {
+
+    if (blockToReplace != 0 && blockToReplaceData.blockType != Block::LIQUID) [[unlikely]] {
         return;
     }
 
-    // Billboard placement validation
+    // Billboard validation
     const Block &selectedBlockData = BlockRegistry::getInstance().getBlock(gameState.selectedBlock);
-    if (selectedBlockData.blockType == Block::BILLBOARD) {
+    if (selectedBlockData.blockType == Block::BILLBOARD) [[unlikely]] {
         const uint16_t blockBelow = chunk->getBlockAtPos(localBlockX, localBlockY - 1, localBlockZ);
-        if (strcmp(BlockRegistry::getInstance().getBlock(blockBelow).blockName, "GRASS_BLOCK") != 0) {
+        const uint32_t belowHash = hashCString(BlockRegistry::getInstance().getBlock(blockBelow).blockName);
+        if (belowHash != HASH_GRASS_BLOCK) {
             return;
         }
     }
@@ -733,7 +785,7 @@ void GameObject::handleBlockPlace(const Physics::RaycastResult &result) {
 // UTILITY
 // ============================================================================
 void GameObject::playSound(const uint16_t block_id) {
-    // Sound lookup table for better performance
+    // OPTIMIZATION: Lookup table for common blocks
     static constexpr struct {
         uint16_t id;
         const char *sound;
@@ -748,13 +800,13 @@ void GameObject::playSound(const uint16_t block_id) {
                 {17, "../assets/sounds/STONE_BLOCK.ogg", 0.4f},
             };
 
-    // Grass blocks (5-12)
-    if (block_id >= 5 && block_id <= 12) {
+    // Fast path for grass blocks (5-12)
+    if (block_id >= 5 && block_id <= 12) [[likely]] {
         graphics::playSound("../assets/sounds/GRASS.ogg", 0.4f);
         return;
     }
 
-    // Lookup in table
+    // Linear search is fast for small tables
     for (const auto &[id, sound, volume]: soundMap) {
         if (id == block_id) {
             graphics::playSound(sound, volume);

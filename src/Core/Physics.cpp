@@ -1,48 +1,192 @@
 #include "Physics.h"
 #include <iostream>
+#include <cmath>
 #include "Blocks.h"
 #include "../World/headers/Planet.h"
 
-Physics::RaycastResult Physics::raycast(const glm::vec3 startPos, const glm::vec3 direction, const float maxDistance)
+/**
+ * @file Physics.cpp
+ * @brief Implementation of high-performance physics and raycasting for voxel volumes.
+ */
+
+namespace {
+    /**
+     * @brief Computes the largest integer less than or equal to x.
+     * Standard std::floor behavior, optimized as a helper for DDA mapping.
+     */
+    [[gnu::always_inline]]
+    int fastFloor(float x) {
+        return static_cast<int>(std::floor(x));
+    }
+    
+    /**
+     * @brief Converts a world-space coordinate to its corresponding chunk grid index.
+     * Optimized to correctly handle negative coordinates using standard flooring.
+     */
+    [[gnu::always_inline, msvc::forceinline]]
+    int worldToChunkCoord(float worldCoord, int chunkSize) {
+        return fastFloor(worldCoord / static_cast<float>(chunkSize));
+    }
+
+    /**
+     * @brief Extracts the fractional part of a float (always in range [0, 1)).
+     */
+    [[gnu::always_inline, msvc::forceinline]]
+    float fract(float x) {
+        return x - std::floor(x);
+    }
+}
+
+/**
+ * @brief Performs a high-performance voxel raycast using the Digital Differential Analyzer (DDA) algorithm.
+ * 
+ * This implementation is specifically hardened to handle:
+ * 1. **Negative Coordinates**: Uses floor-based conversions to ensure consistent chunking globally.
+ * 2. **Boundary Precision**: Correctly calculates distances to the next integer boundary 
+ *    regardless of the ray's sign.
+ * 3. **Chunk Caching**: Minimizes planet-wide chunk lookups by only refreshing the active 
+ *    Chunk pointer when mapPos crosses a CHUNK_WIDTH boundary.
+ */
+Physics::RaycastResult Physics::raycast(const glm::vec3 &startPos, const glm::vec3 &direction, const float maxDistance)
 {
-	float currentDistance = 0;
+    // Ensure direction is unit length for predictable distance accumulation
+    const glm::vec3 dir = glm::normalize(direction);
 
-	while (currentDistance < maxDistance)
-	{
-		currentDistance += RAY_STEP;
-		if (currentDistance > maxDistance)
-			currentDistance = maxDistance;
+    // Initial voxel coordinate (integer grid address)
+    glm::ivec3 mapPos(fastFloor(startPos.x), fastFloor(startPos.y), fastFloor(startPos.z));
 
-		// Get chunk
-		glm::vec3 resultPos = startPos + direction * currentDistance;
-		int chunkX = resultPos.x >= 0 ? resultPos.x / CHUNK_WIDTH : resultPos.x / CHUNK_WIDTH - 1;
-		int chunkY = resultPos.y >= 0 ? resultPos.y / CHUNK_HEIGHT : resultPos.y / CHUNK_HEIGHT - 1;
-		int chunkZ = resultPos.z >= 0 ? resultPos.z / CHUNK_WIDTH : resultPos.z / CHUNK_WIDTH - 1;
-		Chunk* chunk = Planet::planet->getChunk(ChunkPos(chunkX, chunkY, chunkZ));
-		if (chunk == nullptr)
-			continue;
+    // Step direction along each axis: +1 or -1
+    const glm::ivec3 step(
+        dir.x >= 0 ? 1 : -1,
+        dir.y >= 0 ? 1 : -1,
+        dir.z >= 0 ? 1 : -1
+    );
 
-		// Get block pos
-		int localBlockX = static_cast<int>(floor(resultPos.x)) - chunkX * CHUNK_WIDTH;
-		int localBlockZ = static_cast<int>(floor(resultPos.z)) - chunkZ * CHUNK_WIDTH;
-		int localBlockY = static_cast<int>(floor(resultPos.y)) - chunkY * CHUNK_HEIGHT;
+    /**
+     * @brief Boundary distance calculation.
+     * Calculates the distance to the next integer boundary along a specific component.
+     * This handles the 0.0f special case to avoid infinitesimal loops at exact boundaries.
+     */
+    auto calcBoundaryDist = [](float pos, float dir_component) -> float {
+        if (dir_component >= 0) {
+            const float frac = fract(pos);
+            return (frac == 0.0f) ? 1.0f : (1.0f - frac);
+        } else {
+            const float frac = fract(pos);
+            return (frac == 0.0f) ? 1.0f : frac;
+        }
+    };
 
-		// Get block from chunk
-		unsigned int block = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
+    // Distances to the first voxel boundaries
+    const float boundaryX = calcBoundaryDist(startPos.x, dir.x);
+    const float boundaryY = calcBoundaryDist(startPos.y, dir.y);
+    const float boundaryZ = calcBoundaryDist(startPos.z, dir.z);
 
-		// Get result pos
-		int blockX = resultPos.x >= 0 ? static_cast<int>(resultPos.x) : static_cast<int>(resultPos.x) - 1;
-		int blockY = resultPos.y >= 0 ? static_cast<int>(resultPos.y) : static_cast<int>(resultPos.y) - 1;
-		int blockZ = resultPos.z >= 0 ? static_cast<int>(resultPos.z) : static_cast<int>(resultPos.z) - 1;
+    // Precompute inverse directions: used to scale boundary distances into ray-parameter units
+    const float invDirX = (std::abs(dir.x) > 1e-6f) ? (1.0f / std::abs(dir.x)) : 1e6f;
+    const float invDirY = (std::abs(dir.y) > 1e-6f) ? (1.0f / std::abs(dir.y)) : 1e6f;
+    const float invDirZ = (std::abs(dir.z) > 1e-6f) ? (1.0f / std::abs(dir.z)) : 1e6f;
 
-		// Return true if it hit a block
-		if (block != 0 && BlockRegistry::getInstance().getBlock(block).blockType != Block::LIQUID)
-			return { true, resultPos, chunk,
-			blockX, blockY, blockZ,
-			localBlockX, localBlockY, localBlockZ};
-	}
+    // tMax represents the ray distance (t) to the next boundary for each axis
+    glm::vec3 tMax(
+        boundaryX * invDirX,
+        boundaryY * invDirY,
+        boundaryZ * invDirZ
+    );
 
-	return { false, glm::vec3(0), nullptr,
-		0, 0, 0,
-		0, 0, 0};
+    // tDelta represents the constant distance (t) required to move one full voxel along an axis
+    const glm::vec3 tDelta(invDirX, invDirY, invDirZ);
+
+    // Initial chunk coordinate lookup
+    int currentChunkX = worldToChunkCoord(static_cast<float>(mapPos.x), CHUNK_WIDTH);
+    int currentChunkY = worldToChunkCoord(static_cast<float>(mapPos.y), CHUNK_HEIGHT);
+    int currentChunkZ = worldToChunkCoord(static_cast<float>(mapPos.z), CHUNK_WIDTH);
+
+    Chunk* currentChunk = Planet::planet->getChunk(ChunkPos(currentChunkX, currentChunkY, currentChunkZ));
+    const BlockRegistry& blockRegistry = BlockRegistry::getInstance();
+
+    // Iterate until maxDistance is exceeded or a collision is found
+    const int maxIterations = static_cast<int>(maxDistance * 2.0f) + 16; // Heuristic safety limit
+    float currentDistance = 0.0f;
+
+    for (int iteration = 0; iteration < maxIterations && currentDistance < maxDistance; ++iteration) {
+        
+        // OPTIMIZATION: Check if we have entered a new chunk
+        const int chunkX = worldToChunkCoord(static_cast<float>(mapPos.x), CHUNK_WIDTH);
+        const int chunkY = worldToChunkCoord(static_cast<float>(mapPos.y), CHUNK_HEIGHT);
+        const int chunkZ = worldToChunkCoord(static_cast<float>(mapPos.z), CHUNK_WIDTH);
+
+        if (chunkX != currentChunkX || chunkY != currentChunkY || chunkZ != currentChunkZ) [[unlikely]] {
+            currentChunkX = chunkX;
+            currentChunkY = chunkY;
+            currentChunkZ = chunkZ;
+            currentChunk = Planet::planet->getChunk(ChunkPos(currentChunkX, currentChunkY, currentChunkZ));
+        }
+
+        // Only query voxels if the chunk is loaded/exists
+        if (currentChunk != nullptr) [[likely]] {
+            // Transform global mapPos to local chunk relative coordinates
+            const int localBlockX = mapPos.x - currentChunkX * CHUNK_WIDTH;
+            const int localBlockY = mapPos.y - currentChunkY * CHUNK_HEIGHT;
+            const int localBlockZ = mapPos.z - currentChunkZ * CHUNK_WIDTH;
+
+            // Safety check against CHUNK bounds
+            if (localBlockX >= 0 && localBlockX < CHUNK_WIDTH &&
+                localBlockY >= 0 && localBlockY < CHUNK_HEIGHT &&
+                localBlockZ >= 0 && localBlockZ < CHUNK_WIDTH) [[likely]] {
+
+                const unsigned int block = currentChunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
+
+                // Check for block solidity (ignore air and liquids)
+                if (block != 0) [[unlikely]] {
+                    const Block& blockData = blockRegistry.getBlock(block);
+                    if (blockData.blockType != Block::LIQUID) {
+                        
+                        // Precise world-space hit position
+                        const glm::vec3 resultPos = startPos + dir * currentDistance;
+
+                        return {
+                            true, resultPos, currentChunk,
+                            mapPos.x, mapPos.y, mapPos.z,
+                            localBlockX, localBlockY, localBlockZ
+                        };
+                    }
+                }
+            }
+        }
+
+        /**
+         * @brief Core DDA Step.
+         * Select the axis with the shortest remaining distance to its next boundary.
+         * This advances mapPos by exactly one voxel.
+         */
+        if (tMax.x < tMax.y) {
+            if (tMax.x < tMax.z) {
+                currentDistance = tMax.x;
+                mapPos.x += step.x;
+                tMax.x += tDelta.x;
+            } else {
+                currentDistance = tMax.z;
+                mapPos.z += step.z;
+                tMax.z += tDelta.z;
+            }
+        } else {
+            if (tMax.y < tMax.z) {
+                currentDistance = tMax.y;
+                mapPos.y += step.y;
+                tMax.y += tDelta.y;
+            } else {
+                currentDistance = tMax.z;
+                mapPos.z += step.z;
+                tMax.z += tDelta.z;
+            }
+        }
+    }
+
+    // Default return: Ray exceeded range without hit
+    return {
+        false, glm::vec3(0), nullptr,
+        0, 0, 0,
+        0, 0, 0
+    };
 }
