@@ -13,88 +13,125 @@
  * @class Sky
  * @brief Handles the background sky color, sun/moon positions, and global ambient lighting.
  * 
- * The Sky class provides the "Time of Day" logic which affects:
- * 1. **Clear Color**: The background color of the OpenGL context.
- * 2. **Lighting**: Sun direction and color passed to chunk shaders.
- * 3. **Celestial Bodies**: Rendering of sun and moon billboards.
+ * The Sky class manages the "Time of Day" logic, which affects the clear color of the scene, 
+ * directional lighting for chunks, and the rendering of celestial billboards.
+ * 
+ * @note **Optimization**: This class caches computed lighting values per frame to avoid 
+ * redundant trigonometric calculations across multiple getter calls or rendering passes.
  */
 class Sky {
 public:
     /**
-     * @brief Constructor. Sets default time and speeds.
+     * @brief Constructor. Sets default time and cycle parameters.
      */
     Sky();
     
     /**
-     * @brief Destructor. Cleans up OpenGL textures and VAOs.
+     * @brief Destructor. Cleans up OpenGL textures, buffers, and shaders.
      */
     ~Sky();
 
     /**
-     * @brief Initialized celestial textures and geometry.
+     * @brief Initialize celestial textures, shader programs, and quad geometry.
      */
     void init();
 
     /**
-     * @brief Advances the internal clock.
+     * @brief Advances the internal clock and triggers a recalculation of cached lighting values.
      * @param deltaTime Time elapsed since last frame in seconds.
      */
     void update(float deltaTime);
 
     /**
-     * @brief Renders the sun and moon into the scene.
+     * @brief Renders the sun and moon billboards into the scene.
+     * 
+     * Uses additive blending and high-distance translation to ensure celestials appear 
+     * behind all world geometry while following the camera.
+     * 
      * @param view The current camera view matrix.
      * @param projection The current camera projection matrix.
-     * @param cameraPos The world-space position of the camera.
+     * @param cameraPos The world-space position of the camera (used for billboard anchoring).
      */
     void render(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos);
 
-    /** @name Environmental Lighting Parameters
-     * Calculated based on the current time of day.
+    /** @name Environmental Lighting Parameters (Cached)
+     * These values are computed once per frame during update() to minimize CPU overhead.
      * @{
      */
-    glm::vec3 getSunDirection() const;  ///< Unit vector pointing towards the sun.
-    glm::vec3 getSunColor() const;      ///< Light intensity and color of sunbeams.
-    float getAmbientStrength() const;   ///< Global minimum light level (higher at noon).
-    glm::vec3 getSkyColor() const;      ///< Current background clear color.
+    [[nodiscard]] inline glm::vec3 getSunDirection() const noexcept { return cachedSunDirection; }
+    [[nodiscard]] inline glm::vec3 getSunColor() const noexcept { return cachedSunColor; }
+    [[nodiscard]] inline float getAmbientStrength() const noexcept { return cachedAmbientStrength; }
+    [[nodiscard]] inline glm::vec3 getSkyColor() const noexcept { return cachedSkyColor; }
     /** @} */
 
     /**
-     * @brief The current clock state.
+     * @brief The current clock state as a normalized float.
      * 0.0 = Noon, 0.25 = Sunset, 0.5 = Midnight, 0.75 = Sunrise.
      */
     float timeOfDay = 0.0f;
 
-    /// @brief Duration of a full cycle in real-world seconds.
-    float dayLengthSeconds = 600.0f; 
+    /// @brief Duration of a full 24-hour cycle in real-world seconds.
+    float dayLengthSeconds = 600.0f;
 
     /** @name Time Control @{ */
-    void togglePause() { paused = !paused; }
-    bool isPaused() const { return paused; }
+    void togglePause() noexcept { paused = !paused; }
+    [[nodiscard]] bool isPaused() const noexcept { return paused; }
     /** @} */
 
 private:
-    bool paused = false; ///< If true, timeOfDay does not advance.
-    
     /**
-     * @brief Loads a single image as an OpenGL texture.
+     * @brief Member layout optimized for cache efficiency.
+     * Hot data (accessed every frame) is grouped at the top to reduce cache misses.
+     */
+
+    /** @name Cached Lighting Results @{ */
+    glm::vec3 cachedSunDirection{0.3f, -1.0f, 0.0f}; ///< Direction vector for shaders.
+    glm::vec3 cachedSunColor{1.0f, 0.95f, 0.85f};     ///< Sunbeam intensity/color.
+    glm::vec3 cachedSkyColor{0.5f, 0.75f, 1.0f};      ///< Clear-color/Fog color.
+    float cachedAmbientStrength = 0.45f;              ///< Minimum scene brightness.
+    /** @} */
+
+    /** @name Cached Trigonometric Results @{ */
+    float cachedAngle = 0.0f;       ///< Current celestial orbital angle in radians.
+    float cachedSunHeight = -1.0f;  ///< Normalized Y component of sun position.
+    float cachedCosAngle = -1.0f;   ///< cos(cachedAngle)
+    float cachedSinAngle = 0.0f;    ///< sin(cachedAngle)
+    /** @} */
+
+    bool paused = false; ///< If true, time progression is halted.
+
+    /** @name Cold Data
+     * Resource handles and shaders accessed primarily during init/cleanup.
+     * @{
+     */
+    Shader* skyShader = nullptr;
+    GLuint sunTexture = 0;
+    GLuint moonTexture = 0;
+    GLuint quadVAO = 0;
+    GLuint quadVBO = 0;
+    /** @} */
+
+    /**
+     * @brief Loads a single image file into an OpenGL texture with nearest filtering.
      */
     void loadTexture(const char* path, GLuint& texID);
 
-    Shader* skyShader = nullptr; ///< Shader used for billboard rendering.
-    GLuint sunTexture = 0;       ///< Texture ID for the sun.
-    GLuint moonTexture = 0;      ///< Texture ID for the moon.
-    GLuint quadVAO = 0, quadVBO = 0; ///< shared quad geometry for billboards.
-
     /**
-     * @brief Generates the 2D quad mesh used for sun/moon billboards.
+     * @brief Generates the shared 2D quad geometry used for both sun and moon.
      */
     void initQuad();
 
     /**
-     * @brief Internal helper to draw a textured quad at a fixed distance from the camera.
+     * @brief Centralized logic for interpolating lighting and colors based on the sun's height.
+     * This is called automatically by update().
+     */
+    void updateCachedValues();
+
+    /**
+     * @brief Internal helper to render a single billboard at a fixed distance.
+     * Performs camera-facing rotation and applies brightness scaling.
      */
     void renderBillboard(GLuint texture, const glm::vec3& direction, float size,
-                         const glm::mat4& view, const glm::mat4& projection, 
+                         const glm::mat4& view, const glm::mat4& projection,
                          const glm::vec3& cameraPos, float brightness);
 };
