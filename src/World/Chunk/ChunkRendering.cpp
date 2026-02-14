@@ -12,6 +12,8 @@ inline void setupWorldVAO() {
     glEnableVertexAttribArray(2);
     glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, layerIndex)));
     glEnableVertexAttribArray(3);
+    glVertexAttribIPointer(4, 1, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, lightLevel)));
+    glEnableVertexAttribArray(4);
 }
 
 inline void setupWaterVAO() {
@@ -26,8 +28,10 @@ inline void setupWaterVAO() {
     glEnableVertexAttribArray(2);
     glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, sizeof(FluidVertex), reinterpret_cast<void *>(offsetof(FluidVertex, layerIndex)));
     glEnableVertexAttribArray(3);
-    glVertexAttribIPointer(4, 1, GL_BYTE, sizeof(FluidVertex), reinterpret_cast<void *>(offsetof(FluidVertex, top)));
+    glVertexAttribIPointer(4, 1, GL_UNSIGNED_BYTE, sizeof(FluidVertex), reinterpret_cast<void *>(offsetof(FluidVertex, lightLevel)));
     glEnableVertexAttribArray(4);
+    glVertexAttribIPointer(5, 1, GL_BYTE, sizeof(FluidVertex), reinterpret_cast<void *>(offsetof(FluidVertex, top)));
+    glEnableVertexAttribArray(5);
 }
 
 inline void setupBillboardVAO() {
@@ -40,6 +44,8 @@ inline void setupBillboardVAO() {
     glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, sizeof(BillboardVertex), 
                           reinterpret_cast<void *>(offsetof(BillboardVertex, layerIndex)));
     glEnableVertexAttribArray(3);
+    glVertexAttribIPointer(4, 1, GL_UNSIGNED_BYTE, sizeof(BillboardVertex), reinterpret_cast<void *>(offsetof(Vertex, lightLevel)));
+    glEnableVertexAttribArray(4);
 }
 
 void Chunk::uploadMesh() {

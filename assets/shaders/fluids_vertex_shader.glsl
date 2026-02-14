@@ -3,26 +3,29 @@
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec2 aTexCoord;
 layout (location = 2) in int aDirection;
-layout (location = 3) in int aLayerIndex; // Reused aLayerIndex instead of just aTop? Wait, aTop was loc 3?
-layout (location = 4) in int aTop; // Move aTop to next location
+layout (location = 3) in int aLayerIndex;
+layout (location = 4) in int aLightLevel;
+layout (location = 5) in int aTop;
 
 out vec3 TexCoord;
 out vec3 Normal;
+out float vSkyLight;
+out float vBlockLight;
 
-uniform float texMultiplier;
+
 uniform mat4 view;
 uniform mat4 projection;
 uniform float time;
 
 // Array of possible normals based on direction
 const vec3 normals[] = vec3[](
-vec3( 0,  0,  1), // 0
-vec3( 0,  0, -1), // 1
-vec3( 1,  0,  0), // 2
-vec3(-1,  0,  0), // 3
-vec3( 0,  1,  0), // 4
-vec3( 0, -1,  0), // 5
-vec3( 0, -1,  0)  // 6
+vec3( 0,  0, -1), // 0 NORTH
+vec3( 0,  0,  1), // 1 SOUTH
+vec3(-1,  0,  0), // 2 WEST
+vec3( 1,  0,  0), // 3 EAST
+vec3( 0, -1,  0), // 4 BOTTOM
+vec3( 0,  1,  0), // 5 TOP
+vec3( 0,  0,  0)  // 6 PLACEHOLDER
 );
 
 const int aFrames = 32;
@@ -47,4 +50,9 @@ void main()
 	
 	int direction = clamp(aDirection, 0, 6);
 	Normal = normalize(normals[direction]);
+	
+	int sky = (aLightLevel >> 4) & 0xF;
+	int block = aLightLevel & 0xF;
+	vSkyLight = float(sky) / 15.0;
+	vBlockLight = float(block) / 15.0;
 }

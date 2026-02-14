@@ -14,7 +14,7 @@
 // ============================================================================
 int convertToASCIIsum(const std::string &input) {
     int sum = 0;
-    for (const char c : input) {
+    for (const char c: input) {
         const int charVal = static_cast<unsigned char>(c);
         if (sum > INT_MAX - charVal) return INT_MAX;
         if (sum < INT_MIN + charVal) return INT_MIN;
@@ -38,6 +38,12 @@ GameObject::~GameObject() {
     if (outlineVBO)
         glDeleteBuffers(1, &outlineVBO);
 
+    if (worldShader) delete worldShader;
+    if (billboardShader) delete billboardShader;
+    if (fluidShader) delete fluidShader;
+    if (outlineShader) delete outlineShader;
+    if (bboxShader) delete bboxShader;
+
     graphics::stopMessageLoop();
     graphics::destroyWindow();
 }
@@ -56,10 +62,14 @@ void GameObject::init() {
     initializeUIElements();
     initializeOutlineVAO();
 
-    Planet::planet = new Planet(&worldShader, &fluidShader, &billboardShader, &bboxShader);
+    Planet::planet = new Planet(worldShader, fluidShader, billboardShader, bboxShader);
 
     // Setup callbacks with optimized lambdas
     graphics::setPreDrawFunction([this] {
+        // Update sky
+        sky.update(1.0f / std::max(graphics::getFPS(), 1.0f));
+        //sky.update(1.0f / 2.0 );
+
         updateWindowTitle();
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D_ARRAY, TextureManager::getInstance().getTextureArrayID());
@@ -67,27 +77,34 @@ void GameObject::init() {
         updateFPSSettings();
         updateShaders();
 
+        // Render sky BEFORE chunks (depth test disabled inside Sky::render)
+        sky.render(cachedMatrices.view, cachedMatrices.projection, camera.Position);
+
+        // Re-bind block texture array after sky rendering used texture unit 1
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, TextureManager::getInstance().getTextureArrayID());
+
         // Use saved player position for chunk loading during freecam
         const glm::vec3 &updatePos = freecamActive ? savedPlayerPosition : camera.Position;
         // ENABLE occlusion only if NOT in freecam.
         // In freecam, we want to see all chunks in the player's frustum (no occlusion culling).
         Planet::planet->update(updatePos, !freecamActive);
         renderBlockOutline(outlineVAO);
-        
+
         // Render Player Visualization in Freecam (Black Box)
         if (freecamActive) {
-            bboxShader.use();
+            bboxShader->use();
             // IMPORTANT: Use current camera matrices for visualization, NOT the frozen frustum matrices
-            bboxShader["viewProjection"] = cachedMatrices.projection * cachedMatrices.view;
-            
+            (*bboxShader)["viewProjection"] = cachedMatrices.projection * cachedMatrices.view;
+
             // Black color for the box
-            bboxShader["color"] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-            
+            (*bboxShader)["color"] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+
             // Standard player size approx 0.6x1.8x0.6. Box uses center/extents.
-            // Center is position - eye level (approx 1.62m). 
-            glm::vec3 playerCenter = savedPlayerPosition - glm::vec3(0.0f, 0.81f, 0.0f); 
+            // Center is position - eye level (approx 1.62m).
+            glm::vec3 playerCenter = savedPlayerPosition - glm::vec3(0.0f, 0.81f, 0.0f);
             glm::vec3 playerExtents(0.3f, 0.9f, 0.3f); // Half-widths/heights
-            
+
             // Draw filled box
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             Planet::planet->drawBoundingBox(playerCenter, playerExtents);
@@ -127,47 +144,57 @@ void GameObject::initializeGraphics() {
     graphics::createWindow(windowX, windowY, "");
     graphics::setFont("../assets/fonts/Arial.ttf");
 
-    camera = Camera(glm::vec3(0.0f, MAX_HEIGHT/2 + 10, 0.0f));
+    camera = Camera(glm::vec3(0.0f, MAX_HEIGHT / 2 + 10, 0.0f));
 
     // Load textures using Dynamic Atlas
     TextureManager::getInstance().loadTextures("../assets/sprites/blocks");
-    
+
     // Initialize Blocks (builds registry and resolves textures)
     Blocks::init();
-    
+
     // Initialize Biomes (sets up biome definitions with features)
     BiomeRegistry::getInstance().init();
+
+    // Initialize Sky (loads sun/moon textures)
+    sky.init();
 }
 
 void GameObject::initializeShaders() {
     // We bind the texture to slot 0 in the render loop, so we set the shader uniform to 0.
     const int slotBound = 0;
-    constexpr float texMultiplier = 0.0625f; // 1/16 for texture atlas
 
     // World shader
-    worldShader = Shader("../assets/shaders/world_vertex_shader.glsl",
-                         "../assets/shaders/world_fragment_shader.glsl");
-    worldShader["SMART_texMultiplier"] = texMultiplier;
-    worldShader["SMART_tex"] = slotBound;
+    worldShader = new Shader("../assets/shaders/world_vertex_shader.glsl",
+                             "../assets/shaders/world_fragment_shader.glsl");
+    (*worldShader)["SMART_tex"] = slotBound;
 
     // Billboard shader
-    billboardShader = Shader("../assets/shaders/billboard_vertex_shader.glsl",
-                             "../assets/shaders/billboard_fragment_shader.glsl");
-    billboardShader["SMART_texMultiplier"] = texMultiplier;
-    billboardShader["SMART_tex"] = slotBound;
+    billboardShader = new Shader("../assets/shaders/billboard_vertex_shader.glsl",
+                                 "../assets/shaders/billboard_fragment_shader.glsl");
+    (*billboardShader)["SMART_tex"] = slotBound;
 
     // Fluid shader
-    fluidShader = Shader("../assets/shaders/fluids_vertex_shader.glsl",
-                         "../assets/shaders/fluids_fragment_shader.glsl");
-    fluidShader["SMART_texMultiplier"] = texMultiplier;
-    fluidShader["SMART_tex"] = slotBound;
+    fluidShader = new Shader("../assets/shaders/fluids_vertex_shader.glsl",
+                             "../assets/shaders/fluids_fragment_shader.glsl");
+    (*fluidShader)["SMART_tex"] = slotBound;
 
     // Outline shader
-    outlineShader = Shader("../assets/shaders/block_outline_vertex_shader.glsl",
-                           "../assets/shaders/block_outline_fragment_shader.glsl");
+    outlineShader = new Shader("../assets/shaders/block_outline_vertex_shader.glsl",
+                               "../assets/shaders/block_outline_fragment_shader.glsl");
 
     // BBox shader (Occlusion Queries)
-    bboxShader = Shader("../assets/shaders/bbox_vertex.glsl", "../assets/shaders/bbox_fragment.glsl");
+    bboxShader = new Shader("../assets/shaders/bbox_vertex.glsl", "../assets/shaders/bbox_fragment.glsl");
+
+    // Check for compilation errors
+    if (!worldShader->program || !billboardShader->program || !fluidShader->program || !outlineShader->program || !
+        bboxShader->program) {
+        std::cerr << "[CRITICAL] Shader compilation failed!" << std::endl;
+        std::cerr << "World: " << worldShader->program << std::endl;
+        std::cerr << "Billboard: " << billboardShader->program << std::endl;
+        std::cerr << "Fluid: " << fluidShader->program << std::endl;
+        std::cerr << "Outline: " << outlineShader->program << std::endl;
+        std::cerr << "BBox: " << bboxShader->program << std::endl;
+    }
 }
 
 void GameObject::initializeUIElements() {
@@ -240,14 +267,14 @@ void GameObject::updateShaders() {
             glm::radians(90.0f),
             windowX / windowY,
             10000.0f, // Swapped near/far for Reverse-Z
-            0.1f      // Reverted to 0.1f for near plane
+            0.1f // Reverted to 0.1f for near plane
         );
         cachedMatrices.dirty = false;
     }
 
     const glm::mat4 &view = cachedMatrices.view;
     const glm::mat4 &projection = cachedMatrices.projection;
-    
+
     const glm::mat4 currentViewProjection = projection * view;
 
     // Use frozen frustum during freecam, otherwise use current camera
@@ -256,26 +283,45 @@ void GameObject::updateShaders() {
     Planet::planet->updateFrustum(frustumVP, currentViewProjection);
 
     // Batch shader updates
-    worldShader.use(true);
-    worldShader["SMART_view"] = view;
-    worldShader["SMART_projection"] = projection;
+    glm::vec3 sunDir = sky.getSunDirection();
+    glm::vec3 sunCol = sky.getSunColor();
+    float ambient = sky.getAmbientStrength();
 
-    billboardShader.use(true);
-    billboardShader["SMART_view"] = view;
-    billboardShader["SMART_projection"] = projection;
+    // Batch shader updates
+    // Clear any previous GL errors (e.g. from Sky or TextureManager) to prevent crash
+    while (glGetError() != GL_NO_ERROR);
 
-    fluidShader.use(true);
-    fluidShader["SMART_view"] = view;
-    fluidShader["SMART_projection"] = projection;
-    fluidShader["SMART_time"] = SDL_GetTicks() / 1000.0f;
+    worldShader->use(true);
+    (*worldShader)["view"] = view;
+    (*worldShader)["projection"] = projection;
+    (*worldShader)["sunDirection"] = sunDir;
+    (*worldShader)["sunColor"] = sunCol;
+    (*worldShader)["ambientStrength"] = ambient;
 
-    outlineShader.use(true);
-    outlineShader["SMART_view"] = view;
-    outlineShader["SMART_projection"] = projection;
+    billboardShader->use(true);
+    (*billboardShader)["view"] = view;
+    (*billboardShader)["projection"] = projection;
+    (*billboardShader)["sunDirection"] = sunDir;
+    (*billboardShader)["sunColor"] = sunCol;
+    (*billboardShader)["ambientStrength"] = ambient;
+
+    fluidShader->use(true);
+    (*fluidShader)["view"] = view;
+    (*fluidShader)["projection"] = projection;
+    (*fluidShader)["time"] = SDL_GetTicks() / 1000.0f;
+    (*fluidShader)["sunDirection"] = sunDir;
+    (*fluidShader)["sunColor"] = sunCol;
+    (*fluidShader)["ambientStrength"] = ambient;
+
+    outlineShader->use(true);
+    (*outlineShader)["SMART_view"] = view;
+    (*outlineShader)["SMART_projection"] = projection;
 }
 
 void GameObject::setupRenderingState() {
-    glClearColor(0.6f, 0.8f, 1.0f, 1.0f);
+    // Use sky color for clear color
+    glm::vec3 skyCol = sky.getSkyColor();
+    glClearColor(skyCol.r, skyCol.g, skyCol.b, 1.0f);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glClearDepth(0.0f); // Reverse-Z: Clear to 0.0 instead of 1.0
@@ -294,11 +340,11 @@ void GameObject::setupRenderingState() {
 // RENDERING
 // ============================================================================
 void GameObject::renderBlockOutline(const unsigned int vao) {
-    outlineShader.use(true);
+    outlineShader->use(true);
     const auto result = Physics::raycast(camera.Position, camera.Front,
-                                   GameConstants::RAYCAST_DISTANCE);
+                                         GameConstants::RAYCAST_DISTANCE);
     if (result.hit) {
-        outlineShader["model"] = glm::vec4(result.blockX, result.blockY, result.blockZ, 1);
+        (*outlineShader)["model"] = glm::vec4(result.blockX, result.blockY, result.blockZ, 1);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         glLogicOp(GL_INVERT);
         glDisable(GL_CULL_FACE);
@@ -398,8 +444,10 @@ void GameObject::renderDebugInfo() const {
 
     drawText(10, 30, 15, "FPS: " + std::to_string(static_cast<int>(graphics::getFPS())), textBrush);
     drawText(10, 50, 15, coordsText.str(), textBrush);
-    drawText(10, 70, 15, "SELECTED BLOCK: " + std::string(BlockRegistry::getInstance().getBlock(gameState.selectedBlock).blockName), textBrush);
-    
+    drawText(10, 70, 15,
+             "SELECTED BLOCK: " + std::string(BlockRegistry::getInstance().getBlock(gameState.selectedBlock).blockName),
+             textBrush);
+
     if (freecamActive) {
         textBrush.fill_color[0] = 1.0f;
         textBrush.fill_color[1] = 0.5f;
@@ -549,7 +597,7 @@ void GameObject::keyboardCallBack(float deltaTime) {
         if (!f1Pressed) {
             f1Pressed = true;
             freecamActive = !freecamActive;
-            
+
             if (freecamActive) {
                 // Entering freecam: Save current position and view frustum
                 savedPlayerPosition = camera.Position;
@@ -562,6 +610,18 @@ void GameObject::keyboardCallBack(float deltaTime) {
         }
     } else {
         f1Pressed = false;
+    }
+
+    // F2: Toggle Sky Time
+    static bool f2Pressed = false;
+    if (getKeyState(graphics::SCANCODE_F2)) {
+        if (!f2Pressed) {
+            f2Pressed = true;
+            sky.togglePause();
+            std::cout << "Sky Time " << (sky.isPaused() ? "PAUSED" : "RESUMED") << std::endl;
+        }
+    } else {
+        f2Pressed = false;
     }
 
     // F11 fullscreen toggle
@@ -583,24 +643,24 @@ void GameObject::keyboardCallBack(float deltaTime) {
 void GameObject::handleBlockBreak(const Physics::RaycastResult &result) {
     const uint32_t blockType = result.chunk->getBlockAtPos(
         result.localBlockX, result.localBlockY, result.localBlockZ);
-    
+
     // Dependent breaking: Tall Grass
     // If bottom is broken, break top as well.
-    const Block& currentBlock = BlockRegistry::getInstance().getBlock(blockType);
-    
+    const Block &currentBlock = BlockRegistry::getInstance().getBlock(blockType);
+
     if (strcmp(currentBlock.blockName, "TALL_GRASS_BOTTOM") == 0) {
         uint32_t aboveBlock = result.chunk->getBlockAtPos(
             result.localBlockX, result.localBlockY + 1, result.localBlockZ);
-        
-        const Block& aboveBlockData = BlockRegistry::getInstance().getBlock(aboveBlock);
-        
+
+        const Block &aboveBlockData = BlockRegistry::getInstance().getBlock(aboveBlock);
+
         if (strcmp(aboveBlockData.blockName, "TALL_GRASS_TOP") == 0) {
             // Must handle cross-chunk boundary if Y=15? (Current implementation clamps or wraps?)
-            // Chunk::getBlockAtPos usually handles local coords. 
+            // Chunk::getBlockAtPos usually handles local coords.
             // If localBlockY+1 == CHUNK_HEIGHT, it might be an issue if getBlockAtPos doesn't handle neighbor chunks.
             // But let's assume simple cases or verify if getBlockAtPos handles out of bounds.
             // Actually, for now, let's keep it simple.
-             result.chunk->updateBlock(result.localBlockX, result.localBlockY + 1, result.localBlockZ, 0);
+            result.chunk->updateBlock(result.localBlockX, result.localBlockY + 1, result.localBlockZ, 0);
         }
     }
     // User requested: If top is broken, bottom remains (so no action needed for TALL_GRASS_TOP).
@@ -651,13 +711,13 @@ void GameObject::handleBlockPlace(const Physics::RaycastResult &result) {
     const uint16_t blockToReplace = chunk->getBlockAtPos(localBlockX, localBlockY, localBlockZ);
 
     // Check if we can place
-    const Block& blockToReplaceData = BlockRegistry::getInstance().getBlock(blockToReplace);
+    const Block &blockToReplaceData = BlockRegistry::getInstance().getBlock(blockToReplace);
     if (blockToReplace != 0 && blockToReplaceData.blockType != Block::LIQUID) {
         return;
     }
 
     // Billboard placement validation
-    const Block& selectedBlockData = BlockRegistry::getInstance().getBlock(gameState.selectedBlock);
+    const Block &selectedBlockData = BlockRegistry::getInstance().getBlock(gameState.selectedBlock);
     if (selectedBlockData.blockType == Block::BILLBOARD) {
         const uint16_t blockBelow = chunk->getBlockAtPos(localBlockX, localBlockY - 1, localBlockZ);
         if (strcmp(BlockRegistry::getInstance().getBlock(blockBelow).blockName, "GRASS_BLOCK") != 0) {

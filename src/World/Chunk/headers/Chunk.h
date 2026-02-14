@@ -10,6 +10,7 @@
 #include "Block.h"
 #include "ChunkPos.h"
 #include "ChunkData.h"
+#include "WorldConstants.h"
 #include <memory>
 
 constexpr int SUBCHUNK_HEIGHT = 16;
@@ -45,6 +46,9 @@ public:
     // MESH GENERATION (ChunkMeshGeneration.cpp)
     // ========================================================================
     void generateChunkMesh();
+
+    // Light map computation (BFS flood-fill from emissive blocks)
+    void computeLightMap();
 
     // Horizontal faces (TOP/BOTTOM) with greedy meshing
     void generateHorizontalFaces(unsigned int* currentVertex);
@@ -82,7 +86,7 @@ public:
     void generateBillboardFaces(int x, int y, int z, const Block *block, unsigned int &currentVertex, int subChunkIndex);
 
     void generateLiquidFaces(int x, int y, int z, FACE_DIRECTION faceDirection, const Block *block,
-                             unsigned int &currentVertex, char liquidTopValue, int subChunkIndex);
+                             unsigned int &currentVertex, char liquidTopValue, uint8_t light, int subChunkIndex);
 
     // ========================================================================
     // RENDERING (ChunkRendering.cpp)
@@ -108,6 +112,11 @@ public:
 
     // Reset chunk for reuse in object pool
     void reset(ChunkPos newPos);
+
+    [[nodiscard]] uint8_t getLightLevel(int x, int y, int z) const {
+        if (x < 0 || x >= CHUNK_WIDTH || y < 0 || y >= CHUNK_HEIGHT || z < 0 || z >= CHUNK_WIDTH) return 0;
+        return lightMap[x * CHUNK_WIDTH * CHUNK_HEIGHT + z * CHUNK_HEIGHT + y];
+    }
 
     // ========================================================================
     // UTILITY FUNCTIONS
@@ -157,6 +166,13 @@ public:
 private:
     glm::vec3 worldPos;
     std::thread chunkThread;
+
+    // Per-block light level (0-15), same indexing as ChunkData
+    uint8_t lightMap[CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_WIDTH] = {};
+
+    // Neighbor chunks cache (updated in generateChunkMesh)
+    // 0: North (-Z), 1: South (+Z), 2: West (-X), 3: East (+X)
+    const Chunk* neighborChunks[4] = { nullptr, nullptr, nullptr, nullptr };
 
     // Temporary buffers per sub-chunk (used during generation, cleared after upload)
     std::vector<WorldVertex> worldVertices[NUM_SUBCHUNKS];

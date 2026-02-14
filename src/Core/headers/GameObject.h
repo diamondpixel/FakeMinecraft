@@ -11,6 +11,7 @@
 #include "Slider.h"
 #include "TextureManager.h"
 #include "TypeBox.h"
+#include "Sky.h"
 
 // Forward declarations
 class Chunk;
@@ -57,7 +58,7 @@ private:
 
     // Update methods
     void updateShaders();
-    static void setupRenderingState();
+    void setupRenderingState();
     static void updateWindowTitle();
 
     // Input handling
@@ -88,11 +89,15 @@ private:
     GameState gameState;
 
     // Shaders
-    Shader worldShader;
-    Shader billboardShader;
-    Shader fluidShader;
-    Shader outlineShader;
-    Shader bboxShader;
+    // Shaders
+    Shader* worldShader = nullptr;
+    Shader* billboardShader = nullptr;
+    Shader* fluidShader = nullptr;
+    Shader* outlineShader = nullptr;
+    Shader* bboxShader = nullptr;
+
+    // Sky system
+    Sky sky;
 
     // UI Elements
     Checkbox fullscreenCheckBox;

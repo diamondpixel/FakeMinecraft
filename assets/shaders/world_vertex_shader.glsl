@@ -4,27 +4,38 @@ layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec2 aTexCoord;
 layout (location = 2) in int aDirection;
 layout (location = 3) in int aLayerIndex;
+layout (location = 4) in int aLightLevel;
 
 out vec3 TexCoord;
 out vec3 Normal;
-uniform float texMultiplier;
+out float vSkyLight;
+out float vBlockLight;
+
+
 uniform mat4 view;
 uniform mat4 projection;
 uniform float time;
 
 // Array of possible normals based on direction
 const vec3 normals[] = vec3[](
-vec3(0, 0, 1), // 0
-vec3(0, 0, -1), // 1
-vec3(1, 0, 0), // 2
-vec3(-1, 0, 0), // 3
-vec3(0, 1, 0), // 4
-vec3(0, -1, 0), // 5
-vec3(0, -1, 0)// 6
+vec3( 0,  0, -1), // 0 NORTH
+vec3( 0,  0,  1), // 1 SOUTH
+vec3(-1,  0,  0), // 2 WEST
+vec3( 1,  0,  0), // 3 EAST
+vec3( 0, -1,  0), // 4 BOTTOM
+vec3( 0,  1,  0), // 5 TOP
+vec3( 0,  0,  0)  // 6 PLACEHOLDER
 );
 void main()
 {
 	gl_Position = projection * view * vec4(aPos, 1.0);
-	TexCoord = vec3(aTexCoord, float(aLayerIndex)); // texMultiplier not needed if aTexCoord is 0..N
+	TexCoord = vec3(aTexCoord, float(aLayerIndex));
 	Normal = normals[aDirection];
+	
+	// Unpack light levels (0-15)
+	int sky = (aLightLevel >> 4) & 0xF;
+	int block = aLightLevel & 0xF;
+	
+	vSkyLight = float(sky) / 15.0;
+	vBlockLight = float(block) / 15.0;
 }

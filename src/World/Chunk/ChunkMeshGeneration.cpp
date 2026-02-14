@@ -2,10 +2,20 @@
 #include "ChunkUtils.h"
 #include "ChunkGreedyMeshing.h"
 #include "Blocks.h"
+#include "Planet.h"
 
 
 void Chunk::generateChunkMesh() {
     if (!chunkData) return;
+
+    // Compute block lighting (BFS from emissive blocks like lava)
+    computeLightMap();
+
+    // Cache neighbor chunks for lighting at boundaries
+    neighborChunks[0] = Planet::planet->getChunk({chunkPos.x, chunkPos.y, chunkPos.z - 1}); // North
+    neighborChunks[1] = Planet::planet->getChunk({chunkPos.x, chunkPos.y, chunkPos.z + 1}); // South
+    neighborChunks[2] = Planet::planet->getChunk({chunkPos.x - 1, chunkPos.y, chunkPos.z}); // West
+    neighborChunks[3] = Planet::planet->getChunk({chunkPos.x + 1, chunkPos.y, chunkPos.z}); // East
 
     // Clear and reserve per-subchunk buffers
     for (int i = 0; i < NUM_SUBCHUNKS; ++i) {
@@ -169,7 +179,9 @@ void Chunk::greedyMergeTopFaces(int y, int subChunkIndex, uint16_t topMask[][CHU
             }
 
             // Emit merged quad
-            GreedyQuad quad{x, y, z, width, height, blockId, TOP};
+            // Get light level from adjacent air block (above this face)
+            uint8_t light = (y + 1 < CHUNK_HEIGHT) ? lightMap[x * CHUNK_WIDTH * CHUNK_HEIGHT + z * CHUNK_HEIGHT + (y + 1)] : 0;
+            GreedyQuad quad{x, y, z, width, height, blockId, TOP, light};
             emitGreedyQuad(quad, worldPos, worldVertices[subChunkIndex],
                           worldIndices[subChunkIndex], currentVertex[subChunkIndex]);
         }
@@ -211,7 +223,8 @@ void Chunk::greedyMergeBottomFaces(int y, int subChunkIndex, uint16_t bottomMask
                 }
             }
 
-            GreedyQuad quad{x, y, z, width, height, blockId, BOTTOM};
+            uint8_t light = (y - 1 >= 0) ? lightMap[x * CHUNK_WIDTH * CHUNK_HEIGHT + z * CHUNK_HEIGHT + (y - 1)] : 0;
+            GreedyQuad quad{x, y, z, width, height, blockId, BOTTOM, light};
             emitGreedyQuad(quad, worldPos, worldVertices[subChunkIndex],
                           worldIndices[subChunkIndex], currentVertex[subChunkIndex]);
         }
@@ -479,7 +492,15 @@ void Chunk::greedyMergeNorthFaces(int z, uint16_t maskA[][CHUNK_HEIGHT],
 
             int subIdx = y / SUBCHUNK_HEIGHT;
             if (subIdx >= NUM_SUBCHUNKS) subIdx = NUM_SUBCHUNKS - 1;
-            GreedyQuad quad{x, y, z, width, height, id, NORTH};
+            
+            uint8_t light = 0;
+            if (z - 1 >= 0) {
+                 light = lightMap[x * CHUNK_WIDTH * CHUNK_HEIGHT + (z - 1) * CHUNK_HEIGHT + y];
+            } else if (neighborChunks[0]) { // North Neighbor
+                 light = neighborChunks[0]->getLightLevel(x, y, CHUNK_WIDTH - 1);
+            }
+            
+            GreedyQuad quad{x, y, z, width, height, id, NORTH, light};
             emitGreedyQuad(quad, worldPos, worldVertices[subIdx], worldIndices[subIdx], currentVertex[subIdx]);
         }
     }
@@ -509,7 +530,15 @@ void Chunk::greedyMergeSouthFaces(int z, uint16_t maskB[][CHUNK_HEIGHT],
 
             int subIdx = y / SUBCHUNK_HEIGHT;
             if (subIdx >= NUM_SUBCHUNKS) subIdx = NUM_SUBCHUNKS - 1;
-            GreedyQuad quad{x, y, z, width, height, id, SOUTH};
+            
+            uint8_t light = 0;
+            if (z + 1 < (int)CHUNK_WIDTH) {
+                 light = lightMap[x * CHUNK_WIDTH * CHUNK_HEIGHT + (z + 1) * CHUNK_HEIGHT + y];
+            } else if (neighborChunks[1]) { // South Neighbor
+                 light = neighborChunks[1]->getLightLevel(x, y, 0);
+            }
+
+            GreedyQuad quad{x, y, z, width, height, id, SOUTH, light};
             emitGreedyQuad(quad, worldPos, worldVertices[subIdx], worldIndices[subIdx], currentVertex[subIdx]);
         }
     }
@@ -538,7 +567,15 @@ void Chunk::greedyMergeWestFaces(int x, uint16_t maskA[][CHUNK_HEIGHT],
 
             int subIdx = y / SUBCHUNK_HEIGHT;
             if (subIdx >= NUM_SUBCHUNKS) subIdx = NUM_SUBCHUNKS - 1;
-            GreedyQuad quad{x, y, z, width, height, id, WEST};
+            
+            uint8_t light = 0;
+            if (x - 1 >= 0) {
+                 light = lightMap[(x - 1) * CHUNK_WIDTH * CHUNK_HEIGHT + z * CHUNK_HEIGHT + y];
+            } else if (neighborChunks[2]) { // West Neighbor
+                 light = neighborChunks[2]->getLightLevel(CHUNK_WIDTH - 1, y, z);
+            }
+            
+            GreedyQuad quad{x, y, z, width, height, id, WEST, light};
             emitGreedyQuad(quad, worldPos, worldVertices[subIdx], worldIndices[subIdx], currentVertex[subIdx]);
         }
     }
@@ -567,7 +604,15 @@ void Chunk::greedyMergeEastFaces(int x, uint16_t maskB[][CHUNK_HEIGHT],
 
             int subIdx = y / SUBCHUNK_HEIGHT;
             if (subIdx >= NUM_SUBCHUNKS) subIdx = NUM_SUBCHUNKS - 1;
-            GreedyQuad quad{x, y, z, width, height, id, EAST};
+            
+            uint8_t light = 0;
+            if (x + 1 < (int)CHUNK_WIDTH) {
+                 light = lightMap[(x + 1) * CHUNK_WIDTH * CHUNK_HEIGHT + z * CHUNK_HEIGHT + y];
+            } else if (neighborChunks[3]) {
+                 light = neighborChunks[3]->getLightLevel(0, y, z);
+            }
+            
+            GreedyQuad quad{x, y, z, width, height, id, EAST, light};
             emitGreedyQuad(quad, worldPos, worldVertices[subIdx], worldIndices[subIdx], currentVertex[subIdx]);
         }
     }
@@ -636,9 +681,28 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
              fetchNorthNeighbor(neighbor, x, y, z, localData, northData, upData);
         }
         
+        // Helper to get light at neighbor
+        auto getNeighborLight = [&](int nx, int ny, int nz, int nDir) -> uint8_t {
+             if (nx < 0) {
+                 return neighborChunks[2] ? neighborChunks[2]->getLightLevel(CHUNK_WIDTH - 1, ny, nz) : 0;
+             }
+             if (nx >= CHUNK_WIDTH) {
+                 return neighborChunks[3] ? neighborChunks[3]->getLightLevel(0, ny, nz) : 0;
+             }
+             if (nz < 0) {
+                 return neighborChunks[0] ? neighborChunks[0]->getLightLevel(nx, ny, CHUNK_WIDTH - 1) : 0;
+             }
+             if (nz >= CHUNK_WIDTH) {
+                 return neighborChunks[1] ? neighborChunks[1]->getLightLevel(nx, ny, 0) : 0;
+             }
+             if (ny < 0 || ny >= CHUNK_HEIGHT) return 0; // Or Skylight 15 if > max?
+             return lightMap[nx * CHUNK_WIDTH * CHUNK_HEIGHT + nz * CHUNK_HEIGHT + ny];
+        };
+
         if (shouldRenderFace(neighbor, isBlockLiquid)) {
             if (isBlockLiquid) {
-                generateLiquidFaces(x, y, z, NORTH, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+                uint8_t l = getNeighborLight(x, y, z - 1, 0); // North
+                generateLiquidFaces(x, y, z, NORTH, block, currentLiquidVertex[subChunkIndex], waterTopValue, l, subChunkIndex);
             } else {
                 generateWorldFaces(x, y, z, NORTH, block, currentVertex[subChunkIndex], subChunkIndex);
             }
@@ -656,7 +720,8 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
 
         if (shouldRenderFace(neighbor, isBlockLiquid)) {
             if (isBlockLiquid) {
-                generateLiquidFaces(x, y, z, SOUTH, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+                uint8_t l = getNeighborLight(x, y, z + 1, 1); // South
+                generateLiquidFaces(x, y, z, SOUTH, block, currentLiquidVertex[subChunkIndex], waterTopValue, l, subChunkIndex);
             } else {
                 generateWorldFaces(x, y, z, SOUTH, block, currentVertex[subChunkIndex], subChunkIndex);
             }
@@ -674,7 +739,8 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
 
         if (shouldRenderFace(neighbor, isBlockLiquid)) {
             if (isBlockLiquid) {
-                generateLiquidFaces(x, y, z, WEST, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+                uint8_t l = getNeighborLight(x - 1, y, z, 2); // West
+                generateLiquidFaces(x, y, z, WEST, block, currentLiquidVertex[subChunkIndex], waterTopValue, l, subChunkIndex);
             } else {
                 generateWorldFaces(x, y, z, WEST, block, currentVertex[subChunkIndex], subChunkIndex);
             }
@@ -692,7 +758,8 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
 
         if (shouldRenderFace(neighbor, isBlockLiquid)) {
             if (isBlockLiquid) {
-                generateLiquidFaces(x, y, z, EAST, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+                uint8_t l = getNeighborLight(x + 1, y, z, 3); // East
+                generateLiquidFaces(x, y, z, EAST, block, currentLiquidVertex[subChunkIndex], waterTopValue, l, subChunkIndex);
             } else {
                 generateWorldFaces(x, y, z, EAST, block, currentVertex[subChunkIndex], subChunkIndex);
             }
@@ -700,7 +767,8 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
 
         // Liquid TOP faces (not greedy meshed)
         if (isBlockLiquid && topBlockType->blockType != Block::LIQUID) {
-            generateLiquidFaces(x, y, z, TOP, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+            uint8_t l = getNeighborLight(x, y + 1, z, 4); // Top (Up)
+            generateLiquidFaces(x, y, z, TOP, block, currentLiquidVertex[subChunkIndex], waterTopValue, l, subChunkIndex);
         }
 
         // Liquid BOTTOM faces
@@ -714,7 +782,8 @@ void Chunk::generateSpecialBlocks(unsigned int* currentVertex, unsigned int* cur
             
             const Block *bottomBlockType = &BlockRegistry::getInstance().getBlock(bottomBlockId);
             if (bottomBlockType->blockType != Block::LIQUID && bottomBlockType->blockType != Block::SOLID) {
-                generateLiquidFaces(x, y, z, BOTTOM, block, currentLiquidVertex[subChunkIndex], waterTopValue, subChunkIndex);
+                uint8_t l = getNeighborLight(x, y - 1, z, 5); // Bottom (Down)
+                generateLiquidFaces(x, y, z, BOTTOM, block, currentLiquidVertex[subChunkIndex], waterTopValue, l, subChunkIndex);
             }
         }
     };
