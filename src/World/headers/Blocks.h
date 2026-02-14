@@ -151,9 +151,9 @@ namespace Blocks {
         );
 
         // --- Resolution Phase ---
-        TextureManager& tm = TextureManager::getInstance();
+        const TextureManager& tm = TextureManager::getInstance();
         for (const auto& block : registry.getAllBlocks()) {
-             Block& b = registry.getBlockMutable(block.id);
+             const Block& b = registry.getBlockMutable(block.id);
              if (b.blockName == "AIR") continue;
              
              // Map string names to numeric texture indices

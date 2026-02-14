@@ -6,7 +6,6 @@
 #pragma once
 
 #include "Block.h"
-#include <string>
 
 /**
  * @class BlockBuilder

@@ -61,7 +61,7 @@ namespace {
      * of a full RNG state update. Based on the SplitMix64 philosophy.
      */
     [[gnu::always_inline, msvc::forceinline]]
-    inline uint64_t fastHash(int64_t x, int64_t z, uint64_t seed, uint64_t salt = 0) {
+    uint64_t fastHash(int64_t x, int64_t z, uint64_t seed, uint64_t salt = 0) {
         uint64_t h = seed;
         h ^= static_cast<uint64_t>(x) * 0x517cc1b727220a95ULL;
         h ^= static_cast<uint64_t>(z) * 0x85ebca6b5f0e7d9bULL;

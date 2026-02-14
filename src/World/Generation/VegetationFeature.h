@@ -5,45 +5,62 @@
 
 /**
  * Vegetation feature - places simple 1-2 block tall plants (grass, flowers).
+ * Optimized for cache efficiency and reduced redundant computations.
  */
-class VegetationFeature : public Feature {
+class VegetationFeature final : public Feature {
 public:
-    uint8_t plantBlock;
-    uint8_t topBlock;         // Optional second block for tall plants (0 = none)
-    uint8_t surfaceBlock;     // Block this plant grows on
-    float spawnChance;
+    const uint8_t plantBlock;
+    const uint8_t topBlock;         ///< Optional second block for tall plants (0 = none)
+    const uint8_t surfaceBlock;     ///< Block this plant grows on
+    const float spawnChance;
 
-    VegetationFeature(uint8_t plant, uint8_t surface, float chance, uint8_t top = 0)
+    constexpr VegetationFeature(uint8_t plant, uint8_t surface, float chance, uint8_t top = 0) noexcept
         : plantBlock(plant), topBlock(top), surfaceBlock(surface), spawnChance(chance) {}
 
-    float getSpawnChance() const override { return spawnChance; }
-
-    bool canPlace(const uint8_t* chunkData,
-                  int localX, int localY, int localZ) const override {
-        if (localY <= 0 || localY >= CHUNK_HEIGHT - 2) return false;
-
-        // Check the block below
-        int belowIdx = localX * CHUNK_WIDTH * CHUNK_HEIGHT + localZ * CHUNK_HEIGHT + (localY - 1);
-        if (chunkData[belowIdx] != surfaceBlock) return false;
-
-        // Check current position is air
-        int currentIdx = localX * CHUNK_WIDTH * CHUNK_HEIGHT + localZ * CHUNK_HEIGHT + localY;
-        return chunkData[currentIdx] == Blocks::AIR;
+    [[nodiscard]] float getSpawnChance() const noexcept override {
+        return spawnChance;
     }
 
-    bool place(uint8_t* chunkData, 
-               int localX, int localY, int localZ,
-               int worldX, int worldZ, 
-               uint64_t seed) override {
-        
-        int idx = localX * CHUNK_WIDTH * CHUNK_HEIGHT + localZ * CHUNK_HEIGHT + localY;
-        chunkData[idx] = plantBlock;
+    [[nodiscard]] bool canPlace(const uint8_t* chunkData,
+                                 int localX, int localY, int localZ) const noexcept override {
+        // Early bounds check - reject invalid Y coordinates immediately
+        if (localY <= 0 || localY >= CHUNK_HEIGHT - 2) {
+            return false;
+        }
+
+        const int baseIdx = (localX * CHUNK_WIDTH + localZ) * CHUNK_HEIGHT;
+
+        // Check block below matches required surface type
+        if (chunkData[baseIdx + localY - 1] != surfaceBlock) {
+            return false;
+        }
+
+        // Check current position is air
+        return chunkData[baseIdx + localY] == Blocks::AIR;
+    }
+
+    [[nodiscard]] bool place(uint8_t* chunkData,
+                              int localX, int localY, int localZ,
+                              int worldX, int worldZ,
+                              uint64_t seed) noexcept override {
+        // Suppress unused parameter warnings
+        (void)worldX;
+        (void)worldZ;
+        (void)seed;
+
+        const int baseIdx = (localX * CHUNK_WIDTH + localZ) * CHUNK_HEIGHT;
+
+        // Place primary plant block
+        chunkData[baseIdx + localY] = plantBlock;
 
         // Place top block for tall plants
-        if (topBlock != 0 && localY + 1 < CHUNK_HEIGHT) {
-            int topIdx = localX * CHUNK_WIDTH * CHUNK_HEIGHT + localZ * CHUNK_HEIGHT + (localY + 1);
-            if (chunkData[topIdx] == Blocks::AIR) {
-                chunkData[topIdx] = topBlock;
+        if (topBlock != 0) {
+            const int topY = localY + 1;
+            if (topY < CHUNK_HEIGHT) {
+                const int topIdx = baseIdx + topY;
+                if (chunkData[topIdx] == Blocks::AIR) {
+                    chunkData[topIdx] = topBlock;
+                }
             }
         }
 

@@ -3,90 +3,104 @@
 #include "Feature.h"
 #include "../../Chunk/headers/Chunk.h"
 #include "../headers/WorldConstants.h"
-#include <random>
 
 /**
  * Tree feature - places a tree at the given position.
  * Configurable trunk and leaf blocks, height, and canopy size.
+ * Optimized for cache efficiency and reduced computational overhead.
  */
-class TreeFeature : public Feature {
+class TreeFeature final : public Feature {
 public:
-    uint8_t logBlock;
-    uint8_t leavesBlock;
-    int minHeight;
-    int maxHeight;
-    int canopyRadius;
-    float spawnChance;
+    const uint8_t logBlock;
+    const uint8_t leavesBlock;
+    const int minHeight;
+    const int maxHeight;
+    const int canopyRadius;
+    const float spawnChance;
 
-    TreeFeature(uint8_t log, uint8_t leaves, 
-                int minH = 4, int maxH = 7, 
-                int canopy = 2, float chance = 0.02f)
+    constexpr TreeFeature(uint8_t log, uint8_t leaves,
+                          int minH = 4, int maxH = 7,
+                          int canopy = 2, float chance = 0.02f) noexcept
         : logBlock(log), leavesBlock(leaves),
           minHeight(minH), maxHeight(maxH),
           canopyRadius(canopy), spawnChance(chance) {}
 
-    float getSpawnChance() const override { return spawnChance; }
+    [[nodiscard]] float getSpawnChance() const noexcept override {
+        return spawnChance;
+    }
 
-    bool canPlace(const uint8_t* chunkData,
-                  int localX, int localY, int localZ) const override {
-        // Check if we're on a valid surface block
-        if (localY <= 0 || localY >= CHUNK_HEIGHT - maxHeight - 3) return false;
-        
-        // Get the block below (where tree will be planted)
-        int belowIdx = localX * CHUNK_WIDTH * CHUNK_HEIGHT + localZ * CHUNK_HEIGHT + (localY - 1);
-        uint8_t belowBlock = chunkData[belowIdx];
-        
-        // Only place on grass or dirt
+    [[nodiscard]] bool canPlace(const uint8_t* chunkData,
+                                 int localX, int localY, int localZ) const noexcept override {
+        // Early exit on invalid Y position
+        if (localY <= 0 || localY >= CHUNK_HEIGHT - maxHeight - 3) {
+            return false;
+        }
+
+        // Check block below is suitable for tree growth
+        const int belowIdx = calculateIndex(localX, localZ, localY - 1);
+        const uint8_t belowBlock = chunkData[belowIdx];
+
         return belowBlock == Blocks::GRASS_BLOCK || belowBlock == Blocks::DIRT;
     }
 
-    bool place(uint8_t* chunkData, 
-               int localX, int localY, int localZ,
-               int worldX, int worldZ, 
-               uint64_t seed) override {
-        
-        // Simple seeded random for height variation
-        std::mt19937 rng(seed ^ (worldX * 73856093) ^ (worldZ * 19349663));
-        std::uniform_int_distribution<int> heightDist(minHeight, maxHeight);
-        int treeHeight = heightDist(rng);
+    [[nodiscard]] bool place(uint8_t* chunkData,
+                              int localX, int localY, int localZ,
+                              int worldX, int worldZ,
+                              uint64_t seed) noexcept override {
 
-        // Check bounds - make sure we can fit the tree
+        // Fast random height generation without expensive RNG setup
+        const int treeHeight = fastRandomRange(seed, worldX, worldZ, minHeight, maxHeight);
+
+        // Bounds validation - check all constraints upfront
         if (localY + treeHeight + 2 >= CHUNK_HEIGHT) return false;
         if (localX < canopyRadius || localX >= CHUNK_WIDTH - canopyRadius) return false;
         if (localZ < canopyRadius || localZ >= CHUNK_WIDTH - canopyRadius) return false;
 
-        // Place trunk
+        // Place trunk - optimize by calculating base index once
+        const int trunkBaseIdx = calculateIndex(localX, localZ, localY);
         for (int y = 0; y < treeHeight; ++y) {
-            int idx = localX * CHUNK_WIDTH * CHUNK_HEIGHT + localZ * CHUNK_HEIGHT + (localY + y);
-            chunkData[idx] = logBlock;
+            chunkData[trunkBaseIdx + y] = logBlock;
         }
 
-        // Place leaves (simple sphere-ish pattern)
-        int leafStartY = localY + treeHeight - 2;
-        int leafEndY = localY + treeHeight + 1;
+        // Place leaves - optimized loop with reduced calculations
+        const int leafStartY = localY + treeHeight - 2;
+        const int leafEndY = localY + treeHeight + 1;
+        const int treeTopY = localY + treeHeight;
 
         for (int ly = leafStartY; ly <= leafEndY; ++ly) {
-            int yOffset = ly - (localY + treeHeight);
-            int radius = (yOffset < 0) ? canopyRadius : (canopyRadius - 1);
-            if (radius < 1) radius = 1;
+            if (ly < 0 || ly >= CHUNK_HEIGHT) continue;
 
-            for (int lx = -radius; lx <= radius; ++lx) {
-                for (int lz = -radius; lz <= radius; ++lz) {
-                    // Skip corners for rounder shape
-                    if (abs(lx) == radius && abs(lz) == radius) continue;
+            const int yOffset = ly - treeTopY;
+            const int radius = (yOffset < 0) ? canopyRadius : (canopyRadius - 1);
 
-                    int px = localX + lx;
-                    int pz = localZ + lz;
-                    int py = ly;
+            if (radius < 1) continue;
 
-                    if (px < 0 || px >= CHUNK_WIDTH) continue;
-                    if (pz < 0 || pz >= CHUNK_WIDTH) continue;
-                    if (py < 0 || py >= CHUNK_HEIGHT) continue;
+            const int minX = localX - radius;
+            const int maxX = localX + radius;
+            const int minZ = localZ - radius;
+            const int maxZ = localZ + radius;
 
-                    int idx = px * CHUNK_WIDTH * CHUNK_HEIGHT + pz * CHUNK_HEIGHT + py;
-                    
-                    // Only place leaves if air or existing leaves
-                    if (chunkData[idx] == Blocks::AIR || chunkData[idx] == leavesBlock) {
+            const int startX = (minX < 0) ? 0 : minX;
+            const int endX = (maxX >= CHUNK_WIDTH) ? CHUNK_WIDTH - 1 : maxX;
+            const int startZ = (minZ < 0) ? 0 : minZ;
+            const int endZ = (maxZ >= CHUNK_WIDTH) ? CHUNK_WIDTH - 1 : maxZ;
+
+            for (int px = startX; px <= endX; ++px) {
+                const int dx = px - localX;
+                const int absDx = (dx < 0) ? -dx : dx;
+                if (absDx > radius) continue;
+
+                const int rowBaseIdx = px * CHUNK_WIDTH * CHUNK_HEIGHT + ly;
+
+                for (int pz = startZ; pz <= endZ; ++pz) {
+                    const int dz = pz - localZ;
+                    const int absDz = (dz < 0) ? -dz : dz;
+
+                    if (absDz > radius || (absDx == radius && absDz == radius)) continue;
+
+                    const int idx = rowBaseIdx + pz * CHUNK_HEIGHT;
+                    const uint8_t currentBlock = chunkData[idx];
+                    if (currentBlock == Blocks::AIR || currentBlock == leavesBlock) {
                         chunkData[idx] = leavesBlock;
                     }
                 }
@@ -94,5 +108,25 @@ public:
         }
 
         return true;
+    }
+
+private:
+    [[nodiscard]] static constexpr inline int calculateIndex(int x, int z, int y) noexcept {
+        return (x * CHUNK_WIDTH + z) * CHUNK_HEIGHT + y;
+    }
+
+    [[nodiscard]] static inline int fastRandomRange(uint64_t seed, int worldX, int worldZ,
+                                                      int minVal, int maxVal) noexcept {
+        uint64_t hash = seed;
+        hash ^= static_cast<uint64_t>(worldX) * 73856093ULL;
+        hash ^= static_cast<uint64_t>(worldZ) * 19349663ULL;
+        hash ^= hash >> 33;
+        hash *= 0xff51afd7ed558ccdULL;
+        hash ^= hash >> 33;
+        hash *= 0xc4ceb9fe1a85ec53ULL;
+        hash ^= hash >> 33;
+
+        const int range = maxVal - minVal + 1;
+        return minVal + static_cast<int>(hash % static_cast<uint64_t>(range));
     }
 };

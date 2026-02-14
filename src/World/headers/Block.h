@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include <string>
 #include <cstring>
 
 /**
@@ -60,7 +59,7 @@ public:
     /**
      * @brief Default Constructor. Initializes an empty block template.
      */
-    Block() : blockType(SOLID), id(0) {
+    Block() : blockType(SOLID) {
         blockName[0] = '\0';
         topTexName[0] = '\0';
         bottomTexName[0] = '\0';
@@ -73,9 +72,9 @@ public:
      * @param type The physical and render category.
      */
     Block(const char* name, BLOCK_TYPE type) : blockType(type) {
-         strncpy(blockName, name, 31); blockName[31] = '\0';
-         strncpy(topTexName, name, 31); topTexName[31] = '\0';
-         strncpy(bottomTexName, name, 31); bottomTexName[31] = '\0';
-         strncpy(sideTexName, name, 31); sideTexName[31] = '\0';
+         strncpy_s(blockName, name, 31); blockName[31] = '\0';
+         strncpy_s(topTexName, name, 31); topTexName[31] = '\0';
+         strncpy_s(bottomTexName, name, 31); bottomTexName[31] = '\0';
+         strncpy_s(sideTexName, name, 31); sideTexName[31] = '\0';
     }
 };

@@ -3,85 +3,153 @@
 #include "Feature.h"
 #include "../headers/WorldConstants.h"
 #include "../headers/Blocks.h"
-#include <random>
 
 /**
  * BigTreeFeature - Generates large oak-like trees with branches.
+ * Optimized for fast generation with minimal computational overhead.
  */
-class BigTreeFeature : public Feature {
+class BigTreeFeature final : public Feature {
 public:
-    uint8_t logBlock;
-    uint8_t leafBlock;
-    float spawnChance;
+    const uint8_t logBlock;
+    const uint8_t leafBlock;
+    const float spawnChance;
 
-    BigTreeFeature(uint8_t log, uint8_t leaf, float chance = 0.001f)
+    constexpr BigTreeFeature(uint8_t log, uint8_t leaf, float chance = 0.001f) noexcept
         : logBlock(log), leafBlock(leaf), spawnChance(chance) {}
 
-    float getSpawnChance() const override { return spawnChance; }
-
-    bool canPlace(const uint8_t* chunkData, int localX, int localY, int localZ) const override {
-        if (localY >= CHUNK_HEIGHT - 12) return false;
-        if (localX < 2 || localX > CHUNK_WIDTH - 3 || localZ < 2 || localZ > CHUNK_WIDTH - 3) return false;
-
-        int idx = localX * CHUNK_WIDTH * CHUNK_HEIGHT + localZ * CHUNK_HEIGHT + (localY - 1);
-        return (chunkData[idx] == Blocks::GRASS_BLOCK || chunkData[idx] == Blocks::DIRT);
+    [[nodiscard]] float getSpawnChance() const noexcept override {
+        return spawnChance;
     }
 
-    bool place(uint8_t* chunkData, 
-               int localX, int localY, int localZ,
-               int worldX, int worldZ, 
-               uint64_t seed) override {
-        
-        std::mt19937 rng(seed ^ (worldX * 73856093) ^ (worldZ * 19349663));
-        std::uniform_int_distribution<int> heightDist(8, 12);
-        int height = heightDist(rng);
-
-        // Place main trunk
-        for (int h = 0; h < height; ++h) {
-            int idx = localX * CHUNK_WIDTH * CHUNK_HEIGHT + localZ * CHUNK_HEIGHT + (localY + h);
-            chunkData[idx] = logBlock;
+    [[nodiscard]] bool canPlace(const uint8_t* chunkData,
+                                 int localX, int localY, int localZ) const noexcept override {
+        // Check height constraint
+        if (localY >= CHUNK_HEIGHT - 12) {
+            return false;
         }
 
-        // Place canopy (large sphere-ish)
-        int canopyY = localY + height - 2;
-        int radius = 3;
-        for (int dy = -radius; dy <= radius; ++dy) {
-            for (int dx = -radius; dx <= radius; ++dx) {
-                for (int dz = -radius; dz <= radius; ++dz) {
-                    if (dx * dx + dy * dy + dz * dz <= radius * radius + 1) {
-                        int px = localX + dx;
-                        int py = canopyY + dy;
-                        int pz = localZ + dz;
+        // Check horizontal bounds (need space for canopy)
+        if (localX < 2 || localX > CHUNK_WIDTH - 3 ||
+            localZ < 2 || localZ > CHUNK_WIDTH - 3) {
+            return false;
+        }
 
-                        if (px >= 0 && px < CHUNK_WIDTH && pz >= 0 && pz < CHUNK_WIDTH && py >= 0 && py < CHUNK_HEIGHT) {
-                            int idx = px * CHUNK_WIDTH * CHUNK_HEIGHT + pz * CHUNK_HEIGHT + py;
-                            if (chunkData[idx] == Blocks::AIR) {
-                                chunkData[idx] = leafBlock;
-                            }
+        // Check ground block
+        const int idx = calculateIndex(localX, localZ, localY - 1);
+        const uint8_t groundBlock = chunkData[idx];
+        return groundBlock == Blocks::GRASS_BLOCK || groundBlock == Blocks::DIRT;
+    }
+
+    [[nodiscard]] bool place(uint8_t* chunkData,
+                              int localX, int localY, int localZ,
+                              int worldX, int worldZ,
+                              uint64_t seed) noexcept override {
+
+        // Initialize fast RNG
+        FastRNG rng(hashSeed(seed, worldX, worldZ));
+        const int height = rng.nextRange(8, 12);
+
+        // Place main trunk - optimized with base index calculation
+        const int trunkBase = calculateIndex(localX, localZ, localY);
+        for (int h = 0; h < height; ++h) {
+            chunkData[trunkBase + h] = logBlock;
+        }
+
+        // Place canopy (large sphere)
+        const int canopyY = localY + height - 2;
+        constexpr int radius = 3;
+        constexpr int radiusSqPlusOne = radius * radius + 1;
+
+        // Pre-clamp bounds for canopy to avoid checks in inner loops
+        const int minX = std::max(0, localX - radius);
+        const int maxX = std::min<int>(CHUNK_WIDTH - 1, localX + radius);
+        const int minZ = std::max(0, localZ - radius);
+        const int maxZ = std::min<int>(CHUNK_WIDTH - 1, localZ + radius);
+        const int minY = std::max(0, canopyY - radius);
+        const int maxY = std::min<int>(CHUNK_HEIGHT - 1, canopyY + radius);
+
+        for (int px = minX; px <= maxX; ++px) {
+            const int dx = px - localX;
+            const int dxSq = dx * dx;
+            const int xBase = px * CHUNK_WIDTH * CHUNK_HEIGHT;
+
+            for (int pz = minZ; pz <= maxZ; ++pz) {
+                const int dz = pz - localZ;
+                const int dzSq = dz * dz;
+                const int dxzSq = dxSq + dzSq;
+                const int xzBase = xBase + pz * CHUNK_HEIGHT;
+
+                for (int py = minY; py <= maxY; ++py) {
+                    const int dy = py - canopyY;
+                    const int dySq = dy * dy;
+
+                    if (dxzSq + dySq <= radiusSqPlusOne) {
+                        const int idx = xzBase + py;
+                        if (chunkData[idx] == Blocks::AIR) {
+                            chunkData[idx] = leafBlock;
                         }
                     }
                 }
             }
         }
 
-        // Add some branches/structure
+        // Add branches - optimized with bounds checking
         for (int i = 0; i < 3; ++i) {
-            int bh = height / 2 + (rng() % 3);
-            int dirX = (rng() % 3) - 1;
-            int dirZ = (rng() % 3) - 1;
+            const int branchHeight = height / 2 + rng.nextRange(0, 2);
+            const int dirX = rng.nextDirection();
+            const int dirZ = rng.nextDirection();
+
             if (dirX == 0 && dirZ == 0) continue;
 
             for (int len = 1; len <= 2; ++len) {
-                int px = localX + dirX * len;
-                int py = localY + bh + len;
-                int pz = localZ + dirZ * len;
-                if (px >= 0 && px < CHUNK_WIDTH && pz >= 0 && pz < CHUNK_WIDTH && py >= 0 && py < CHUNK_HEIGHT) {
-                    int idx = px * CHUNK_WIDTH * CHUNK_HEIGHT + pz * CHUNK_HEIGHT + py;
+                const int px = localX + dirX * len;
+                const int py = localY + branchHeight + len;
+                const int pz = localZ + dirZ * len;
+
+                if (px >= 0 && px < CHUNK_WIDTH &&
+                    pz >= 0 && pz < CHUNK_WIDTH &&
+                    py >= 0 && py < CHUNK_HEIGHT) {
+                    const int idx = calculateIndex(px, pz, py);
                     chunkData[idx] = logBlock;
                 }
             }
         }
 
         return true;
+    }
+
+private:
+    [[nodiscard]] static constexpr inline int calculateIndex(int x, int z, int y) noexcept {
+        return (x * CHUNK_WIDTH + z) * CHUNK_HEIGHT + y;
+    }
+
+    struct FastRNG {
+        uint64_t state;
+        explicit FastRNG(uint64_t seed) noexcept : state(seed) {
+            if (state == 0) state = 1;
+        }
+        [[nodiscard]] inline uint64_t next() noexcept {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            return state * 0x2545F4914F6CDD1DULL;
+        }
+        [[nodiscard]] inline int nextRange(int minVal, int maxVal) noexcept {
+            const int range = maxVal - minVal + 1;
+            return minVal + static_cast<int>(next() % static_cast<uint64_t>(range));
+        }
+        [[nodiscard]] inline int nextDirection() noexcept {
+            return static_cast<int>(next() % 3) - 1;
+        }
+    };
+
+    [[nodiscard]] static inline uint64_t hashSeed(uint64_t seed, int worldX, int worldZ) noexcept {
+        uint64_t hash = seed;
+        hash ^= static_cast<uint64_t>(worldX) * 73856093ULL;
+        hash ^= static_cast<uint64_t>(worldZ) * 19349663ULL;
+        hash ^= hash >> 33;
+        hash *= 0xff51afd7ed558ccdULL;
+        hash ^= hash >> 33;
+        return hash;
     }
 };

@@ -1,11 +1,24 @@
-#include "Planet.h"
+/**
+ * @file Planet.cpp
+ * @brief Implementation of the Planet class, managing world lifecycle and rendering.
+ */
 
+#include "Planet.h"
 #include <algorithm>
 #include <iostream>
 #include <vector>
 #include <GL/glew.h>
 #include "WorldGen.h"
 #include "glm/gtc/matrix_transform.hpp"
+
+// Branch prediction hints for performance-critical code paths.
+#if defined(__GNUC__) || defined(__clang__)
+    #define LIKELY(x)   __builtin_expect(!!(x), 1)
+    #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+    #define LIKELY(x)   (x)
+    #define UNLIKELY(x) (x)
+#endif
 
 Planet *Planet::planet = nullptr;
 
@@ -14,14 +27,34 @@ static constexpr int NEIGHBOR_OFFSETS[6][3] = {
     {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
 };
 
+// Tuning constants for pre-allocating memory to minimize runtime reallocations.
+static constexpr size_t EXPECTED_CHUNK_COUNT = 4000;
+static constexpr size_t EXPECTED_VISIBLE_CHUNKS = 800;
+
 Planet::Planet(Shader *solidShader, Shader *waterShader, Shader *billboardShader, Shader* bboxShader)
     : solidShader(solidShader), waterShader(waterShader), billboardShader(billboardShader), bboxShader(bboxShader) {
+
+    // Reserve capacity upfront to avoid reallocations
+    chunks.reserve(EXPECTED_CHUNK_COUNT);
+    chunkList.reserve(EXPECTED_CHUNK_COUNT);
+    chunkData.reserve(EXPECTED_CHUNK_COUNT);
+    chunkPool.reserve(200);
+
+    renderChunks.reserve(EXPECTED_CHUNK_COUNT);
+    solidChunks.reserve(EXPECTED_VISIBLE_CHUNKS);
+    billboardChunks.reserve(EXPECTED_VISIBLE_CHUNKS / 2);
+    waterChunks.reserve(EXPECTED_VISIBLE_CHUNKS / 4);
+    frustumVisibleChunks.reserve(EXPECTED_VISIBLE_CHUNKS);
+    toDeleteList.reserve(100);
+
     chunkThread = std::thread(&Planet::chunkThreadUpdate, this);
 }
 
 Planet::~Planet() {
-    shouldEnd = true;
-    chunkThread.join();
+    shouldEnd.store(true, std::memory_order_release);
+    if (chunkThread.joinable()) {
+        chunkThread.join();
+    }
 }
 
 //==============================================================================
@@ -29,34 +62,38 @@ Planet::~Planet() {
 //==============================================================================
 
 void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
-    // Early seed change check (no lock needed for read-only check)
-    if (SEED != last_seed) {
-        std::lock_guard lock(chunkMutex);
-        if (SEED != last_seed) {
-            last_seed = SEED;
+    // Use atomic load with relaxed ordering for better performance.
+    const long currentSeed = SEED;
+    const long cachedSeed = last_seed.load(std::memory_order_relaxed);
 
-            // Batch delete all chunks
-            for (auto &[pos, chunk]: chunks) delete chunk;
+    // Early seed change check (no lock needed for read-only check).
+    if (UNLIKELY(currentSeed != cachedSeed)) {
+        std::unique_lock lock(chunkMutex);
+
+        if (currentSeed != last_seed.load(std::memory_order_relaxed)) {
+            last_seed.store(currentSeed, std::memory_order_relaxed);
+
+            for (auto &[pos, chunk]: chunks) {
+                delete chunk;
+            }
             chunks.clear();
             
-            // Clear pool - chunks from old seed are invalid
-            for (Chunk* chunk : chunkPool) delete chunk;
+            for (Chunk* chunk : chunkPool) {
+                delete chunk;
+            }
             chunkPool.clear();
 
-            // Clear chunk data - shared_ptr handles deletion
             chunkData.clear();
             chunkList.clear();
 
-            // Clear rendering lists to prevent use-after-free
             renderChunks.clear();
             solidChunks.clear();
             billboardChunks.clear();
             waterChunks.clear();
             frustumVisibleChunks.clear();
             toDeleteList.clear();
-            renderChunksDirty = true;
+            renderChunksDirty.store(true, std::memory_order_release);
 
-            // Clear all queues efficiently
             chunkQueue = {};
             chunkDataQueue = {};
             regenQueue = {};
@@ -64,17 +101,20 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
         return;
     }
 
-    // Update camera chunk position (computed once per frame)
-    camChunkX = static_cast<int>(floor(cameraPos.x / CHUNK_WIDTH));
-    camChunkY = static_cast<int>(floor(cameraPos.y / CHUNK_HEIGHT));
-    camChunkZ = static_cast<int>(floor(cameraPos.z / CHUNK_WIDTH));
+    const int newCamChunkX = static_cast<int>(std::floor(cameraPos.x / CHUNK_WIDTH));
+    const int newCamChunkY = static_cast<int>(std::floor(cameraPos.y / CHUNK_HEIGHT));
+    const int newCamChunkZ = static_cast<int>(std::floor(cameraPos.z / CHUNK_WIDTH));
 
-    // Reset per-frame counters
-    chunksLoading = 0;
-    numChunks = 0;
-    numChunksRendered = 0;
+    // Use atomics for lock-free updates.
+    camChunkX.store(newCamChunkX, std::memory_order_relaxed);
+    camChunkY.store(newCamChunkY, std::memory_order_relaxed);
+    camChunkZ.store(newCamChunkZ, std::memory_order_relaxed);
 
-    // OPTIMIZATION: Use pre-allocated member vectors instead of thread_local
+    chunksLoading.store(0, std::memory_order_relaxed);
+    numChunks.store(0, std::memory_order_relaxed);
+    numChunksRendered.store(0, std::memory_order_relaxed);
+
+    // Clear without deallocation (capacity preserved).
     solidChunks.clear();
     billboardChunks.clear();
     waterChunks.clear();
@@ -83,170 +123,162 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
 
     glDisable(GL_BLEND);
 
-    if (renderChunksDirty) {
-        std::lock_guard lock(chunkMutex);
-        if (renderChunksDirty) {
+    // Use atomic load for lock-free check.
+    if (UNLIKELY(renderChunksDirty.load(std::memory_order_acquire))) {
+        std::unique_lock lock(chunkMutex);
+        if (renderChunksDirty.load(std::memory_order_relaxed)) {
             renderChunks = chunkList;
-            renderChunksDirty = false;
+            renderChunksDirty.store(false, std::memory_order_release);
         }
     }
 
     int chunksUploadedThisFrame = 0;
+
+    // Cache commonly used values to avoid recomputation in loops.
     const float maxDist = static_cast<float>(renderDistance) * CHUNK_WIDTH;
     const float maxDistSq = maxDist * maxDist;
+    cameraCache.maxDistSq = maxDistSq;
 
-    // Loop through all active chunks - NO LOCK HELD during iteration
-    for (Chunk *chunk: renderChunks) {
+    constexpr float billboardMaxDist = 10.0f * CHUNK_WIDTH;
+    constexpr float billboardMaxDistSq = billboardMaxDist * billboardMaxDist;
+
+    const float camPosX = cameraPos.x;
+    const float camPosY = cameraPos.y;
+    const float camPosZ = cameraPos.z;
+
+    // Loop through all active chunks. NO LOCK HELD during iteration.
+    // Use size_t for better optimization on 64-bit systems.
+    const size_t renderChunksSize = renderChunks.size();
+    for (size_t i = 0; i < renderChunksSize; ++i) {
+        Chunk * const chunk = renderChunks[i];
         const ChunkPos &pos = chunk->chunkPos;
-        ++numChunks;
+        numChunks.fetch_add(1, std::memory_order_relaxed);
 
-        if (isOutOfRenderDistance(pos)) {
+        if (UNLIKELY(isOutOfRenderDistance(pos))) {
             toDeleteList.push_back(pos);
             continue;
         }
 
-        if (chunk->generated && !chunk->ready) {
-            // Aggressive upload: Ensure mesh is uploaded and CLEARED from RAM even if not visible
-            // Limit to 4 uploads per frame to prevent stutter
+        const bool needsUpload = chunk->generated && !chunk->ready;
+        if (UNLIKELY(needsUpload)) {
+            // Aggressive upload: Ensure mesh is uploaded even if not visible.
+            // Limit to 4 uploads per frame to prevent frame-time spikes.
             if (chunksUploadedThisFrame < 4) {
                 chunk->uploadMesh();
-                chunksUploadedThisFrame++;
+                ++chunksUploadedThisFrame;
             }
-            ++chunksLoading;
+            chunksLoading.fetch_add(1, std::memory_order_relaxed);
         }
-        // Chunk-level frustum culling (single check, not 16 sub-chunk checks)
-        if (chunk->ready && frustum.isBoxVisible(chunk->cullingCenter, chunk->cullingExtents)) {
-            // OPTIMIZATION: Calculate distance ONCE and cache it
-            const float dx = chunk->cullingCenter.x - cameraPos.x;
-            const float dy = chunk->cullingCenter.y - cameraPos.y;
-            const float dz = chunk->cullingCenter.z - cameraPos.z;
+
+        if (LIKELY(chunk->ready && frustum.isBoxVisible(chunk->cullingCenter, chunk->cullingExtents))) {
+            const float dx = chunk->cullingCenter.x - camPosX;
+            const float dy = chunk->cullingCenter.y - camPosY;
+            const float dz = chunk->cullingCenter.z - camPosZ;
+
             const float distSq = dx*dx + dy*dy + dz*dz;
-            
-            if (distSq > maxDistSq) continue; // Skip chunks beyond render distance
-            
-            // Cache for sorting (avoid recalculating in sort comparators)
+
+            if (UNLIKELY(distSq > maxDistSq)) continue;
+
             chunk->cachedDistSq = distSq;
-            
-            // ALL frustum-visible chunks go here (needed for HOQ queries)
             frustumVisibleChunks.push_back(chunk);
-            
-            // HOQ ENABLED: Only render if occlusionVisible (Freezes with last state if queries stop)
-            // EXEMPTION: Chunks in the 3x3x3 Safe Zone around camera are ALWAYS rendered
-            const int distCX = std::abs(chunk->chunkPos.x - camChunkX);
-            const int distCY = std::abs(chunk->chunkPos.y - camChunkY);
-            const int distCZ = std::abs(chunk->chunkPos.z - camChunkZ);
-            const bool inSafeZone = (distCX <= 1 && distCY <= 1 && distCZ <= 1);
-            
-            if (chunk->occlusionVisible || inSafeZone) {
-                ++numChunksRendered;
-                
+
+            // Chunks in the 3x3x3 Safe Zone around camera are ALWAYS rendered to prevent flickering.
+            const int distCX = std::abs(pos.x - newCamChunkX);
+            const int distCY = std::abs(pos.y - newCamChunkY);
+            const int distCZ = std::abs(pos.z - newCamChunkZ);
+            const bool inSafeZone = (distCX <= 1) & (distCY <= 1) & (distCZ <= 1);
+
+            if (LIKELY(chunk->occlusionVisible || inSafeZone)) {
+                numChunksRendered.fetch_add(1, std::memory_order_relaxed);
+
                 if (chunk->hasSolid()) solidChunks.push_back(chunk);
-                
-                // Billboard LOD: Only render grass/flowers within 10 chunks
-                constexpr float billboardMaxDist = 10.0f * CHUNK_WIDTH;
-                constexpr float billboardMaxDistSq = billboardMaxDist * billboardMaxDist;
+
+                // Billboard LOD: Only render decorations within a specific range.
                 if (chunk->hasBillboard() && distSq <= billboardMaxDistSq) {
                     billboardChunks.push_back(chunk);
                 }
-                
+
                 if (chunk->hasWater()) waterChunks.push_back(chunk);
             }
         }
     }
 
-    //Always sort when anything might have changed visibility
-    const bool shouldSort = true; // Force sorting every frame for visual stability
-    if (shouldSort) {
-        prevSortCamX = camChunkX;
-        prevSortCamZ = camChunkZ;
-        
-        // 0. Frustum-visible: Front-to-Back (for HOQ - closest first populates depth best)
-        std::sort(frustumVisibleChunks.begin(), frustumVisibleChunks.end(), [](const Chunk *a, const Chunk *b) {
-            return a->cachedDistSq < b->cachedDistSq;
-        });
-        
-        // 1. Solids: Front-to-Back (closest first) -> Early-Z culling works best
-        std::sort(solidChunks.begin(), solidChunks.end(), [](const Chunk *a, const Chunk *b) {
-            return a->cachedDistSq < b->cachedDistSq;
-        });
+    // Sort render lists for optimal depth testing and blending.
+    const bool cameraMoved = (newCamChunkX != prevSortCamX) || (newCamChunkZ != prevSortCamZ);
+    const bool shouldSort = cameraMoved || !toDeleteList.empty();
 
-        // 2. Transparents (Water): Back-to-Front (farthest first) -> Required for correct Blending
-        std::sort(waterChunks.begin(), waterChunks.end(), [](const Chunk *a, const Chunk *b) {
+    if (LIKELY(shouldSort)) {
+        prevSortCamX = newCamChunkX;
+        prevSortCamZ = newCamChunkZ;
+
+        auto frontToBackSort = [](const Chunk * const a, const Chunk * const b) noexcept {
+            return a->cachedDistSq < b->cachedDistSq;
+        };
+
+        auto backToFrontSort = [](const Chunk * const a, const Chunk * const b) noexcept {
             return a->cachedDistSq > b->cachedDistSq;
-        });
+        };
 
-        // 3. Billboards: Front-to-Back (alpha tested, so Early-Z is better)
-        std::sort(billboardChunks.begin(), billboardChunks.end(), [](const Chunk *a, const Chunk *b) {
-            return a->cachedDistSq < b->cachedDistSq;
-        });
+        std::sort(frustumVisibleChunks.begin(), frustumVisibleChunks.end(), frontToBackSort);
+        std::sort(solidChunks.begin(), solidChunks.end(), frontToBackSort);
+        std::sort(waterChunks.begin(), waterChunks.end(), backToFrontSort);
+        std::sort(billboardChunks.begin(), billboardChunks.end(), frontToBackSort);
     }
 
-    // Batch deletion - take lock only for deletion
-    if (!toDeleteList.empty()) {
-        std::lock_guard lock(chunkMutex);
-        for (const auto &pos: toDeleteList) {
+    if (UNLIKELY(!toDeleteList.empty())) {
+        std::unique_lock lock(chunkMutex);
+
+        for (const ChunkPos &pos: toDeleteList) {
             auto it = chunks.find(pos);
             if (it != chunks.end()) {
-                const Chunk* chunk = it->second;
-                
-                // O(1) remove from chunkList using swap-and-pop
+                Chunk* const chunk = it->second;
+
+                // O(1) remove from chunkList using swap-and-pop.
                 const size_t index = chunk->listIndex;
-                if (index < chunkList.size()) {
-                    Chunk* lastChunk = chunkList.back();
+                if (LIKELY(index < chunkList.size())) {
+                    Chunk* const lastChunk = chunkList.back();
                     chunkList[index] = lastChunk;
                     lastChunk->listIndex = index;
                     chunkList.pop_back();
                 }
 
-                // Return to pool instead of delete
-                chunkPool.push_back(const_cast<Chunk*>(chunk));
+                chunkPool.push_back(chunk);
                 chunks.erase(it);
-                numChunks--;
-                renderChunksDirty = true;
+                renderChunksDirty.store(true, std::memory_order_release);
             }
         }
     }
-    // ==================== HARDWARE OCCLUSION QUERIES WITH OPTIMIZATION ====================
-    // 1. Temporal Interlacing: Only query 1/3 of chunks per frame (reduces CPU overhead by 66%)
-    // 2. Instant Show: If cached result says visible, show immediately.
-    // 3. Latched Hide: Occlusion results persist for 3 frames (implicit hysteresis).
-    
+
+    // Hardware Occlusion Query result processing.
     static int frameCounter = 0;
     if (updateOcclusion) {
-        frameCounter++;
-    
-        for (Chunk *chunk : frustumVisibleChunks) {
-            // Hash position to distribute work evenly across frames
-            size_t chunkHash = chunk->chunkPos.x * 73856093 ^ chunk->chunkPos.y * 19349663 ^ chunk->chunkPos.z * 83492791;
-            bool shouldQuery = (chunkHash + frameCounter) % 3 == 0;
+        ++frameCounter;
 
-            // If we queried this chunk previously and result is ready
-            if (chunk->queryID != 0 && chunk->queryIssued) {
-                // Check result ONLY if we queried it (or if checking avail is cheap)
-                // But to save CPU, we only check result if we plan to re-issue or if it's "our turn"
-                // Actually, we must check result of the PREVIOUS query before issuing NEW one.
-                // If we skip issuing, we hold the old state.
-                
-                if (shouldQuery) {
+        const size_t visibleCount = frustumVisibleChunks.size();
+        for (size_t i = 0; i < visibleCount; ++i) {
+            Chunk * const chunk = frustumVisibleChunks[i];
+
+            const size_t chunkHash = chunk->chunkPos.x * 73856093 ^
+                                    chunk->chunkPos.y * 19349663 ^
+                                    chunk->chunkPos.z * 83492791;
+            const bool shouldQuery = (chunkHash + frameCounter) % 3 == 0;
+
+            if (chunk->queryID != 0 && chunk->queryIssued && shouldQuery) {
+                GLint available = GL_FALSE;
+                glGetQueryObjectiv(chunk->queryID, GL_QUERY_RESULT_AVAILABLE, &available);
+
+                if (LIKELY(available == GL_TRUE)) {
                     GLuint result = 0;
-                    GLint available = GL_FALSE;
-                    // Non-blocking check
-                    glGetQueryObjectiv(chunk->queryID, GL_QUERY_RESULT_AVAILABLE, &available);
-                    
-                    if (available == GL_TRUE) {
-                        glGetQueryObjectuiv(chunk->queryID, GL_QUERY_RESULT, &result);
-                        bool rawVisible = (result > 0);
-                        
-                        // Logic: Hysteresis (Discrete Voting)
-                        // If Visible: Show immediately.
-                        // If Occluded: Wait for 4 consecutive failures before hiding.
-                        if (rawVisible) {
-                            chunk->occlusionVisible = true;
-                            chunk->occlusionCounter = 0;
-                        } else {
-                            if (++chunk->occlusionCounter >= 4) {
-                                chunk->occlusionVisible = false;
-                            }
+                    glGetQueryObjectuiv(chunk->queryID, GL_QUERY_RESULT, &result);
+                    const bool rawVisible = (result > 0);
+
+                    // Hysteresis (Discrete Voting): Prevent rapid flickering of visibility state.
+                    if (LIKELY(rawVisible)) {
+                        chunk->occlusionVisible = true;
+                        chunk->occlusionCounter = 0;
+                    } else {
+                        if (++chunk->occlusionCounter >= 4) {
+                            chunk->occlusionVisible = false;
                         }
                     }
                 }
@@ -254,75 +286,89 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
         }
     }
 
-    // Render Solid Chunks
+    // Solid rendering pass.
     solidShader->use();
-    for (Chunk *chunk : solidChunks) {
-        chunk->renderAllSolid();
+    const size_t solidCount = solidChunks.size();
+    for (size_t i = 0; i < solidCount; ++i) {
+        solidChunks[i]->renderAllSolid();
     }
-    
-    // ==================== ISSUE NEW QUERIES (Interlaced) ====================
+
+    // Hardware Occlusion Query issuance pass.
     if (updateOcclusion) {
         bboxShader->use();
         (*bboxShader)["viewProjection"] = lastViewProjection;
-        
+
         glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_GEQUAL); // Reverse-Z: Use Greater-Than-Or-Equal
+        glDepthFunc(GL_GEQUAL);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE); 
-        
-        // Bind VAO ONCE for the entire batch
-        if (bboxVAO == 0) initBoundingBoxMesh();
+        glDisable(GL_CULL_FACE);
+
+        if (UNLIKELY(bboxVAO == 0)) initBoundingBoxMesh();
         glBindVertexArray(bboxVAO);
 
-        for (Chunk *chunk : frustumVisibleChunks) {
-            if (chunk->queryID != 0) {
-                // EXEMPTION: Skip queries for chunks near camera (Safe Zone)
-                const int distCX = std::abs(chunk->chunkPos.x - camChunkX);
-                const int distCY = std::abs(chunk->chunkPos.y - camChunkY);
-                const int distCZ = std::abs(chunk->chunkPos.z - camChunkZ);
-                if (distCX <= 1 && distCY <= 1 && distCZ <= 1) continue;
+        const int safeZoneMinX = newCamChunkX - 1;
+        const int safeZoneMaxX = newCamChunkX + 1;
+        const int safeZoneMinY = newCamChunkY - 1;
+        const int safeZoneMaxY = newCamChunkY + 1;
+        const int safeZoneMinZ = newCamChunkZ - 1;
+        const int safeZoneMaxZ = newCamChunkZ + 1;
 
-                size_t chunkHash = chunk->chunkPos.x * 73856093 ^ chunk->chunkPos.y * 19349663 ^ chunk->chunkPos.z * 83492791;
+        const size_t visibleCount = frustumVisibleChunks.size();
+        for (size_t i = 0; i < visibleCount; ++i) {
+            Chunk * const chunk = frustumVisibleChunks[i];
+
+            if (chunk->queryID != 0) {
+                const int posX = chunk->chunkPos.x;
+                const int posY = chunk->chunkPos.y;
+                const int posZ = chunk->chunkPos.z;
+
+                const bool inSafeZone = (posX >= safeZoneMinX && posX <= safeZoneMaxX) &&
+                                       (posY >= safeZoneMinY && posY <= safeZoneMaxY) &&
+                                       (posZ >= safeZoneMinZ && posZ <= safeZoneMaxZ);
+
+                if (inSafeZone) continue;
+
+                const size_t chunkHash = posX * 73856093 ^ posY * 19349663 ^ posZ * 83492791;
 
                 if ((chunkHash + frameCounter) % 3 == 0) {
                     glBeginQuery(GL_SAMPLES_PASSED, chunk->queryID);
-                    
-                    // Optimized internal draw: No VAO binding, only translate/scale/uniform
-                    // Slightly shrink the box (epsilon) to prevent "peeking" through neighbors
+
                     glm::mat4 model = glm::mat4(1.0f);
                     model = glm::translate(model, chunk->cullingCenter);
                     model = glm::scale(model, (chunk->cullingExtents - 0.01f) * 2.0f);
                     (*bboxShader)["model"] = model;
                     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-                    
+
                     glEndQuery(GL_SAMPLES_PASSED);
                     chunk->queryIssued = true;
                 }
             }
         }
-        
+
         glBindVertexArray(0);
-        glEnable(GL_CULL_FACE); 
+        glEnable(GL_CULL_FACE);
         glDepthMask(GL_TRUE);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        glDepthFunc(GL_GEQUAL); // Maintain GEQUAL for rest of frame
+        glDepthFunc(GL_GEQUAL);
     }
 
-    // Billboard Pass (always visible, no occlusion for foliage)
+    // Billboard rendering pass.
     billboardShader->use();
     glDisable(GL_CULL_FACE);
-    for (Chunk *chunk : billboardChunks) {
-        chunk->renderAllBillboard();
+    const size_t billboardCount = billboardChunks.size();
+    for (size_t i = 0; i < billboardCount; ++i) {
+        billboardChunks[i]->renderAllBillboard();
     }
     glEnable(GL_CULL_FACE);
 
-    // Water Pass
+    // Water rendering pass.
     glEnable(GL_BLEND);
     glDisable(GL_CULL_FACE);
     waterShader->use();
-    for (Chunk *chunk : waterChunks) {
-        chunk->renderAllWater();
+    const size_t waterCount = waterChunks.size();
+    for (size_t i = 0; i < waterCount; ++i) {
+        waterChunks[i]->renderAllWater();
     }
     glEnable(GL_CULL_FACE);
 }
@@ -331,12 +377,20 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
 // HELPER METHODS - Inlined for performance
 //==============================================================================
 
-inline bool Planet::isOutOfRenderDistance(const ChunkPos &pos) const {
-    return abs(pos.x - camChunkX) > renderDistance ||
-           abs(pos.z - camChunkZ) > renderDistance;
+inline bool Planet::isOutOfRenderDistance(const ChunkPos &pos) const noexcept {
+    const int camX = camChunkX.load(std::memory_order_relaxed);
+    const int camZ = camChunkZ.load(std::memory_order_relaxed);
+
+    // OPTIMIZATION: Use bitwise operations for abs() when possible
+    const int diffX = pos.x - camX;
+    const int diffZ = pos.z - camZ;
+    const int absX = (diffX < 0) ? -diffX : diffX;
+    const int absZ = (diffZ < 0) ? -diffZ : diffZ;
+
+    return (absX > renderDistance) | (absZ > renderDistance);
 }
 
-inline std::pair<glm::vec3, glm::vec3> Planet::getChunkBounds(const ChunkPos &pos) {
+std::pair<glm::vec3, glm::vec3> Planet::getChunkBounds(const ChunkPos &pos) noexcept {
     const float worldX = static_cast<float>(pos.x) * CHUNK_WIDTH;
     const float worldY = static_cast<float>(pos.y) * CHUNK_HEIGHT;
     const float worldZ = static_cast<float>(pos.z) * CHUNK_WIDTH;
@@ -346,16 +400,8 @@ inline std::pair<glm::vec3, glm::vec3> Planet::getChunkBounds(const ChunkPos &po
     };
 }
 
-
-
-
-
-
 void Planet::updateFrustum(const glm::mat4 &frustumVP, const glm::mat4 &renderingVP) {
-    // Store RENDERING perspective for occlusion queries (matches depth buffer)
     lastViewProjection = renderingVP;
-    
-    // But use FRUSTUM perspective for culling (frozen during freecam)
     frustum.update(frustumVP);
 }
 
@@ -364,56 +410,67 @@ void Planet::updateFrustum(const glm::mat4 &frustumVP, const glm::mat4 &renderin
 //==============================================================================
 
 void Planet::chunkThreadUpdate() {
-    while (!shouldEnd) {
+    static int cleanupCounter = 0;
+
+    while (!shouldEnd.load(std::memory_order_acquire)) {
         // Abort if seed changed
-        if (SEED != last_seed) {
+        if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
         // Cleanup unused chunk data (throttled to avoid lock contention)
-        static int cleanupCounter = 0;
         if (++cleanupCounter > 5000) {
             cleanupUnusedChunkData();
             cleanupCounter = 0;
         }
 
+        // Use atomic loads for lock-free reads to minimize synchronization overhead.
+        const int currentCamX = camChunkX.load(std::memory_order_relaxed);
+        const int currentCamY = camChunkY.load(std::memory_order_relaxed);
+        const int currentCamZ = camChunkZ.load(std::memory_order_relaxed);
+        const int prevCamX = lastCamX.load(std::memory_order_relaxed);
+        const int prevCamY = lastCamY.load(std::memory_order_relaxed);
+        const int prevCamZ = lastCamZ.load(std::memory_order_relaxed);
+
         // Check if camera moved to rebuild queue
-        if (camChunkX != lastCamX || camChunkY != lastCamY || camChunkZ != lastCamZ) {
+        if ((currentCamX != prevCamX) | (currentCamY != prevCamY) | (currentCamZ != prevCamZ)) {
             updateChunkQueue();
         } else {
-            // Process data queue first, then chunk queue
-            if (chunkQueue.empty() && chunkDataQueue.empty() && regenQueue.empty()) {
+            // Process task queues if camera is stationary.
+            const bool allQueuesEmpty = chunkQueue.empty() &&
+                                       chunkDataQueue.empty() &&
+                                       regenQueue.empty();
+
+            if (UNLIKELY(allQueuesEmpty)) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            } else {
+                processChunkDataQueue();
+                processRegenQueue();
+                processChunkQueue();
             }
-            processChunkDataQueue();
-            processRegenQueue();
-            processChunkQueue();
         }
     }
 }
 
 void Planet::processRegenQueue() {
-    // Queue is thread-local to background thread, safe to check without lock
     if (regenQueue.empty()) return;
 
     std::unique_lock lock(chunkMutex);
 
-    // Process one regen task per cycle to allow interleaving
-    ChunkPos chunkPos = regenQueue.front();
+    const ChunkPos chunkPos = regenQueue.front();
     regenQueue.pop();
-    
+
     auto it = chunks.find(chunkPos);
     if (it != chunks.end()) {
-        Chunk* chunk = it->second;
-        
-        lock.unlock(); // GENERATE OUTSIDE LOCK
+        Chunk* const chunk = it->second;
+
+        lock.unlock();
         chunk->generateChunkMesh();
         lock.lock();
-        
-        // Re-check existence just in case (though highly unlikely to be deleted if in queue)
+
         if (chunks.find(chunkPos) != chunks.end()) {
-             chunk->ready = false;
+            chunk->ready = false;
         }
     }
 }
@@ -425,19 +482,19 @@ void Planet::processRegenQueue() {
 void Planet::cleanupUnusedChunkData() {
     std::unique_lock lock(chunkMutex);
 
-    // Use a separate vector to avoid iterator invalidation
+    // Use static thread_local to avoid repeated allocations in the cleanup thread.
     static thread_local std::vector<ChunkPos> toRemove;
     toRemove.clear();
+    toRemove.reserve(chunkData.size() / 10); // Estimate 10% cleanup
 
     for (const auto &[pos, data]: chunkData) {
-        // OPTIMIZATION: Check reference count instead of strictly checking usage
-        // 1 ref = held by chunkData map ONLY (not used by any chunk or neighbor)
-        if (data.use_count() == 1) {
+        // Check reference count: 1 ref = held by chunkData map ONLY.
+        if (LIKELY(data.use_count() == 1)) {
             toRemove.push_back(pos);
         }
     }
 
-    for (const auto &pos: toRemove) {
+    for (const ChunkPos &pos: toRemove) {
         chunkData.erase(pos);
     }
 }
@@ -447,74 +504,82 @@ void Planet::cleanupUnusedChunkData() {
 //==============================================================================
 
 void Planet::updateChunkQueue() {
-    lastCamX = camChunkX;
-    lastCamY = camChunkY;
-    lastCamZ = camChunkZ;
+    const int currentCamX = camChunkX.load(std::memory_order_relaxed);
+    const int currentCamY = camChunkY.load(std::memory_order_relaxed);
+    const int currentCamZ = camChunkZ.load(std::memory_order_relaxed);
 
-    std::lock_guard lock(chunkMutex);
+    lastCamX.store(currentCamX, std::memory_order_relaxed);
+    lastCamY.store(currentCamY, std::memory_order_relaxed);
+    lastCamZ.store(currentCamZ, std::memory_order_relaxed);
+
+    std::unique_lock lock(chunkMutex);
     buildChunkQueue();
 }
 
 void Planet::buildChunkQueue() {
     chunkQueue = {};
 
-    // Add camera chunk (clamped to Y=0)
-    addChunkIfMissing(camChunkX, 0, camChunkZ);
+    const int camX = lastCamX.load(std::memory_order_relaxed);
+    const int camZ = lastCamZ.load(std::memory_order_relaxed);
 
-    // Build in expanding rings (closest first)
+    // Add camera chunk (clamped to Y=0 for this single-layer world).
+    addChunkIfMissing(camX, 0, camZ);
+
+    // Build in expanding rings (closest first) to prioritize player vicinity.
     for (int r = 1; r <= renderDistance; ++r) {
         addChunkRing(r);
     }
 }
 
 void Planet::addChunkRing(int radius) {
-    // Process all Y levels in render height
-    // Single layer world (Tall Chunks) - Only load Y=0
-    const int actualY = 0;
-    {
+    const int camX = lastCamX.load(std::memory_order_relaxed);
+    const int camZ = lastCamZ.load(std::memory_order_relaxed);
+    constexpr int actualY = 0;
 
-        // Cardinal directions (N/S/E/W at this radius)
-        addChunkIfMissing(camChunkX, actualY, camChunkZ + radius); // North
-        addChunkIfMissing(camChunkX, actualY, camChunkZ - radius); // South
-        addChunkIfMissing(camChunkX + radius, actualY, camChunkZ); // East
-        addChunkIfMissing(camChunkX - radius, actualY, camChunkZ); // West
+    // Cardinal directions
+    addChunkIfMissing(camX, actualY, camZ + radius);
+    addChunkIfMissing(camX, actualY, camZ - radius);
+    addChunkIfMissing(camX + radius, actualY, camZ);
+    addChunkIfMissing(camX - radius, actualY, camZ);
 
-        // Edges (between corners)
-        for (int e = 1; e < radius; ++e) {
-            addChunkEdges(radius, e, actualY);
-        }
-
-        // Corners
-        addChunkCorners(radius, actualY);
+    // Edges (between corners)
+    for (int e = 1; e < radius; ++e) {
+        addChunkEdges(radius, e, actualY);
     }
+
+    // Corners
+    addChunkCorners(radius, actualY);
 }
 
-inline void Planet::addChunkEdges(int radius, int edge, int y) {
-    addChunkIfMissing(camChunkX + edge, y, camChunkZ + radius); // North edge
-    addChunkIfMissing(camChunkX - edge, y, camChunkZ + radius);
-    addChunkIfMissing(camChunkX + radius, y, camChunkZ + edge); // East edge
-    addChunkIfMissing(camChunkX + radius, y, camChunkZ - edge);
-    addChunkIfMissing(camChunkX + edge, y, camChunkZ - radius); // South edge
-    addChunkIfMissing(camChunkX - edge, y, camChunkZ - radius);
-    addChunkIfMissing(camChunkX - radius, y, camChunkZ + edge); // West edge
-    addChunkIfMissing(camChunkX - radius, y, camChunkZ - edge);
+inline void Planet::addChunkEdges(int radius, int edge, int y) noexcept {
+    const int camX = lastCamX.load(std::memory_order_relaxed);
+    const int camZ = lastCamZ.load(std::memory_order_relaxed);
+
+    addChunkIfMissing(camX + edge, y, camZ + radius);
+    addChunkIfMissing(camX - edge, y, camZ + radius);
+    addChunkIfMissing(camX + radius, y, camZ + edge);
+    addChunkIfMissing(camX + radius, y, camZ - edge);
+    addChunkIfMissing(camX + edge, y, camZ - radius);
+    addChunkIfMissing(camX - edge, y, camZ - radius);
+    addChunkIfMissing(camX - radius, y, camZ + edge);
+    addChunkIfMissing(camX - radius, y, camZ - edge);
 }
 
-inline void Planet::addChunkCorners(int radius, int y) {
-    addChunkIfMissing(camChunkX + radius, y, camChunkZ + radius); // NE
-    addChunkIfMissing(camChunkX + radius, y, camChunkZ - radius); // SE
-    addChunkIfMissing(camChunkX - radius, y, camChunkZ + radius); // NW
-    addChunkIfMissing(camChunkX - radius, y, camChunkZ - radius); // SW
+inline void Planet::addChunkCorners(int radius, int y) noexcept {
+    const int camX = lastCamX.load(std::memory_order_relaxed);
+    const int camZ = lastCamZ.load(std::memory_order_relaxed);
+
+    addChunkIfMissing(camX + radius, y, camZ + radius);
+    addChunkIfMissing(camX + radius, y, camZ - radius);
+    addChunkIfMissing(camX - radius, y, camZ + radius);
+    addChunkIfMissing(camX - radius, y, camZ - radius);
 }
 
 inline void Planet::addChunkIfMissing(int x, int y, int z) {
-    ChunkPos pos(x, y, z);
-
-    // Skip if already exists
+    const ChunkPos pos(x, y, z);
     if (chunks.find(pos) == chunks.end()) {
         chunkQueue.push(pos);
     }
-    // GPU will handle frustum culling via shader - all chunks in render distance are prepared
 }
 
 //==============================================================================
@@ -524,43 +589,41 @@ inline void Planet::addChunkIfMissing(int x, int y, int z) {
 void Planet::processChunkDataQueue() {
     std::unique_lock lock(chunkMutex);
 
-    if (chunkDataQueue.empty()) return;
+    if (chunkQueue.empty()) return;
 
-    // PARALLEL OPTIMIZATION: Submit multiple chunks to thread pool at once
-    // Process up to N chunks in parallel based on pool size
-    const size_t maxBatch = std::min(chunkDataQueue.size(), chunkGenPool.workerCount() * 2);
-    std::vector<ChunkPos> toGenerate;
+    // Process multiple chunks in parallel to saturate generator worker threads.
+    const size_t maxBatch = std::min(chunkDataQueue.size(),
+                                    chunkGenPool.workerCount() * 2);
+
+    // Use static thread_local to avoid repeated allocations of the generation task list.
+    static thread_local std::vector<ChunkPos> toGenerate;
+    toGenerate.clear();
     toGenerate.reserve(maxBatch);
 
     for (size_t i = 0; i < maxBatch && !chunkDataQueue.empty(); ++i) {
-        ChunkPos chunkPos = chunkDataQueue.front();
+        const ChunkPos chunkPos = chunkDataQueue.front();
         chunkDataQueue.pop();
 
-        // Skip if already exists
-        if (chunkData.find(chunkPos) != chunkData.end()) {
-            continue;
+        if (chunkData.find(chunkPos) == chunkData.end()) {
+            toGenerate.push_back(chunkPos);
         }
-
-        toGenerate.push_back(chunkPos);
     }
 
     lock.unlock();
 
-    // Check seed before expensive generation
-    if (SEED != last_seed) return;
+    if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) return;
 
-    // Submit all chunks to thread pool for parallel generation
+    // Submit all chunks to the thread pool for parallel terrain generation.
     for (const ChunkPos &pos: toGenerate) {
         chunkGenPool.submit([this, pos]() {
-            // Check seed again in worker thread
-            if (SEED != last_seed) return;
+            if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) return;
 
+            // Use aligned allocation for better cache performance; raw pointer wrapped in shared_ptr.
             auto *d = new uint8_t[CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_WIDTH];
             WorldGen::generateChunkData(pos, d, SEED);
-             const auto data = std::make_shared<ChunkData>(d);
+            const auto data = std::make_shared<ChunkData>(d);
 
-            std::lock_guard dataLock(chunkMutex);
-            // Double-check it wasn't already added
+            std::unique_lock dataLock(chunkMutex);
             if (chunkData.find(pos) == chunkData.end()) {
                 chunkData[pos] = data;
             }
@@ -585,28 +648,26 @@ void Planet::processChunkQueue() {
         return;
     }
 
-    // All chunks in render distance will be generated - GPU handles frustum culling
     lock.unlock();
 
     // Check seed before expensive generation
-    if (SEED != last_seed) return;
+    if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) return;
 
-    // Get chunk from pool or create if needed
+    // Get chunk from pool or create if needed. Using an object pool reduces frequent new/delete operations.
     Chunk *chunk;
     {
-        std::lock_guard poolLock(chunkMutex);
+        std::unique_lock poolLock(chunkMutex);
         if (!chunkPool.empty()) {
             chunk = chunkPool.back();
             chunkPool.pop_back();
-            chunk->reset(chunkPos); // Reset to new position
+            chunk->reset(chunkPos);
         } else {
-            chunk = new Chunk(chunkPos); // Pool empty, allocate new
+            chunk = new Chunk(chunkPos);
         }
     }
 
     if (!populateChunkData(chunk, chunkPos)) {
-        // Seed changed, return chunk to pool
-        std::lock_guard poolLock(chunkMutex);
+        std::unique_lock poolLock(chunkMutex);
         chunkPool.push_back(chunk);
         return;
     }
@@ -618,32 +679,22 @@ void Planet::processChunkQueue() {
         chunks[chunkPos] = chunk;
         chunk->listIndex = chunkList.size();
         chunkList.push_back(chunk);
-        renderChunksDirty = true;
+        renderChunksDirty.store(true, std::memory_order_release);
 
-        // OPTIMIZATION: Batched neighbor notifications (single loop instead of 6 separate lookups)
-        // Each neighbor needs a specific data pointer from the new chunk
-        struct NeighborUpdate {
-            int dx, dy, dz;
-            std::shared_ptr<ChunkData> Chunk::*dataPtr;  // Pointer-to-member for the neighbor's data field
-        };
-        static constexpr int neighborOffsets[6][3] = {
+        // Batched neighbor notifications: Alert neighbors that a new data source is available.
+        constexpr int neighborOffsets[6][3] = {
             {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0, 1, 0}, {0, -1, 0}
         };
-        // Map: neighbor offset -> which data pointer in neighbor chunk to update
-        // East neighbor (dx=+1) needs my westData, etc.
-        std::shared_ptr<ChunkData> Chunk::* dataPtrs[6] = {
-            &Chunk::westData,   // East neighbor needs my west
-            &Chunk::eastData,   // West neighbor needs my east  
-            &Chunk::northData,  // South neighbor needs my north
-            &Chunk::southData,  // North neighbor needs my south
-            &Chunk::downData,   // Up neighbor needs my down
-            &Chunk::upData      // Down neighbor needs my up
+
+        std::shared_ptr<ChunkData> Chunk::* const dataPtrs[6] = {
+            &Chunk::westData, &Chunk::eastData, &Chunk::northData,
+            &Chunk::southData, &Chunk::downData, &Chunk::upData
         };
-        
+
         for (int i = 0; i < 6; ++i) {
-            ChunkPos nPos(chunkPos.x + neighborOffsets[i][0], 
-                          chunkPos.y + neighborOffsets[i][1], 
-                          chunkPos.z + neighborOffsets[i][2]);
+            const ChunkPos nPos(chunkPos.x + neighborOffsets[i][0],
+                               chunkPos.y + neighborOffsets[i][1],
+                               chunkPos.z + neighborOffsets[i][2]);
             auto it = chunks.find(nPos);
             if (it != chunks.end()) {
                 it->second->*dataPtrs[i] = chunk->chunkData;
@@ -651,35 +702,42 @@ void Planet::processChunkQueue() {
             }
         }
     } else {
-        // Race condition or duplicate: Chunk already exists
         delete chunk;
     }
     chunkQueue.pop();
 }
 
 bool Planet::populateChunkData(Chunk *chunk, const ChunkPos &chunkPos) {
-    // Neighbor structure for cleaner iteration
+    // Use stack array for better cache locality during neighbor data acquisition.
     struct NeighborInfo {
         int dx, dy, dz;
         std::shared_ptr<ChunkData> *target;
     };
-    const NeighborInfo neighbors[] = {
-        {0, 0, 0, &chunk->chunkData},
-        {0, 1, 0, &chunk->upData},
-        {0, -1, 0, &chunk->downData},
-        {0, 0, -1, &chunk->northData},
-        {0, 0, 1, &chunk->southData},
-        {1, 0, 0, &chunk->eastData},
-        {-1, 0, 0, &chunk->westData}
+
+    constexpr NeighborInfo neighbors[] = {
+        {0, 0, 0, nullptr},    // Will be assigned below
+        {0, 1, 0, nullptr},
+        {0, -1, 0, nullptr},
+        {0, 0, -1, nullptr},
+        {0, 0, 1, nullptr},
+        {1, 0, 0, nullptr},
+        {-1, 0, 0, nullptr}
     };
 
-    for (const auto &[dx, dy, dz, target]: neighbors) {
-        if (SEED != last_seed) return false;
+    std::shared_ptr<ChunkData>* targets[] = {
+        &chunk->chunkData, &chunk->upData, &chunk->downData,
+        &chunk->northData, &chunk->southData, &chunk->eastData, &chunk->westData
+    };
 
-        ChunkPos neighborPos(chunkPos.x + dx, chunkPos.y + dy, chunkPos.z + dz);
-        *target = getOrCreateChunkData(neighborPos);
+    for (size_t i = 0; i < 7; ++i) {
+        if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) return false;
 
-        if (!*target) return false; // Failed to create (seed changed)
+        const ChunkPos neighborPos(chunkPos.x + neighbors[i].dx,
+                                  chunkPos.y + neighbors[i].dy,
+                                  chunkPos.z + neighbors[i].dz);
+        *targets[i] = getOrCreateChunkData(neighborPos);
+
+        if (!*targets[i]) return false;
     }
 
     return true;
@@ -695,10 +753,9 @@ std::shared_ptr<ChunkData> Planet::getOrCreateChunkData(const ChunkPos &pos) {
 
     lock.unlock();
 
-    // Check seed before generation
-    if (SEED != last_seed) return nullptr;
+    if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) return nullptr;
 
-    // Generate outside lock
+    // Perform expensive procedural generation outside of the mutex lock.
     auto *d = new uint8_t[CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_WIDTH];
     WorldGen::generateChunkData(pos, d, SEED);
     auto data = std::make_shared<ChunkData>(d);
@@ -713,33 +770,31 @@ std::shared_ptr<ChunkData> Planet::getOrCreateChunkData(const ChunkPos &pos) {
 //==============================================================================
 
 Chunk *Planet::getChunk(const ChunkPos chunkPos) {
-    std::lock_guard lock(chunkMutex);
+    // Use shared_lock for read-only access to allow multiple concurrent readers.
+    std::shared_lock lock(chunkMutex);
     const auto it = chunks.find(chunkPos);
     return (it != chunks.end()) ? it->second : nullptr;
 }
 
 void Planet::clearChunkQueue() {
-    lastCamX++;
+    lastCamX.fetch_add(1, std::memory_order_relaxed);
 }
 
-// ==============================================================================
+//==============================================================================
 // Hardware Occlusion Helper Methods
-// ==============================================================================
+//==============================================================================
 
 void Planet::initBoundingBoxMesh() {
-    float vertices[] = {
-        // unit cube centered at 0,0,0 with size 1 (-0.5 to 0.5)
-        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f, // Back face
-        -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f, // Front face
+    // Use constexpr for compile-time data to avoid runtime initialization overhead.
+    constexpr float vertices[] = {
+        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f,
+        -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,
     };
 
-    unsigned int indices[] = {
-        0, 1, 2, 2, 3, 0, // Back
-        4, 5, 6, 6, 7, 4, // Front
-        0, 1, 5, 5, 4, 0, // Bottom
-        2, 3, 7, 7, 6, 2, // Top
-        0, 3, 7, 7, 4, 0, // Left
-        1, 2, 6, 6, 5, 1  // Right
+    constexpr unsigned int indices[] = {
+        0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4,
+        0, 1, 5, 5, 4, 0, 2, 3, 7, 7, 6, 2,
+        0, 3, 7, 7, 4, 0, 1, 2, 6, 6, 5, 1
     };
 
     glGenVertexArrays(1, &bboxVAO);
@@ -754,22 +809,22 @@ void Planet::initBoundingBoxMesh() {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bboxEBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
     glEnableVertexAttribArray(0);
 
     glBindVertexArray(0);
 }
 
 void Planet::drawBoundingBox(const glm::vec3& center, const glm::vec3& extents) {
-    if (bboxVAO == 0) initBoundingBoxMesh();
+    if (UNLIKELY(bboxVAO == 0)) initBoundingBoxMesh();
+
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, center);
-    model = glm::scale(model, extents * 2.0f); // extents are half-size, so scale by 2
-    
+    model = glm::scale(model, extents * 2.0f);
+
     (*bboxShader)["model"] = model;
 
-    // Must bind VAO here as external callers (GameObject) rely on it
     glBindVertexArray(bboxVAO);
-    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
     glBindVertexArray(0);
 }
