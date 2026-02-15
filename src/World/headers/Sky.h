@@ -68,7 +68,7 @@ public:
      * @brief The current clock state as a normalized float.
      * 0.0 = Noon, 0.25 = Sunset, 0.5 = Midnight, 0.75 = Sunrise.
      */
-    float timeOfDay = 0.0f;
+    float timeOfDay = 0.75f;
 
     /// @brief Duration of a full 24-hour cycle in real-world seconds.
     float dayLengthSeconds = 600.0f;

@@ -48,9 +48,28 @@ Planet::Planet(Shader *solidShader, Shader *waterShader, Shader *billboardShader
     toDeleteList.reserve(100);
 
     chunkThread = std::thread(&Planet::chunkThreadUpdate, this);
+
+    // Initialize Shadow Map
+    glGenFramebuffers(1, &depthMapFBO);
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 Planet::~Planet() {
+    glDeleteFramebuffers(1, &depthMapFBO);
+    glDeleteTextures(1, &depthMap);
+
     shouldEnd.store(true, std::memory_order_release);
     if (chunkThread.joinable()) {
         chunkThread.join();
@@ -371,6 +390,38 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
         waterChunks[i]->renderAllWater();
     }
     glEnable(GL_CULL_FACE);
+}
+
+void Planet::renderShadows(Shader* shader) {
+    shader->use();
+    
+    // Simple Shadow Culling: Render chunks within shadow distance around camera
+    const int camX = camChunkX.load(std::memory_order_relaxed);
+    const int camY = camChunkY.load(std::memory_order_relaxed);
+    const int camZ = camChunkZ.load(std::memory_order_relaxed);
+    const int shadowRadius = static_cast<int>(shadowDistance / CHUNK_WIDTH) + 1;
+    
+    // We iterate over the main chunk list as renderChunks might be overly culled for shadows
+    // Optimization: In a real scenario, we'd maintain a separate "shadow visible" list
+    // For now, we iterate all chunks but only draw close ones.
+    const size_t chunkSize = chunkList.size();
+    for(size_t i = 0; i < chunkSize; ++i) {
+        Chunk* const chunk = chunkList[i];
+        if(!chunk || !chunk->ready) continue;
+        
+        const ChunkPos& pos = chunk->chunkPos;
+        if (abs(pos.x - camX) > shadowRadius || abs(pos.z - camZ) > shadowRadius) continue;
+        
+        // Draw solid
+        if(chunk->hasSolid()) {
+             chunk->renderAllSolid();
+        }
+        
+        // Draw billboards (trees, etc cast shadows too)
+        if(chunk->hasBillboard()) {
+             chunk->renderAllBillboard();
+        }
+    }
 }
 
 //==============================================================================

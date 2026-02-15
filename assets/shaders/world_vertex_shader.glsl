@@ -6,15 +6,20 @@ layout (location = 2) in int aDirection;
 layout (location = 3) in int aLayerIndex;
 layout (location = 4) in int aLightLevel;
 
-out vec3 TexCoord;
+out vec3 FragPos;
 out vec3 Normal;
+out vec3 TexCoord;
 out float vSkyLight;
 out float vBlockLight;
+out float Visibility;
+out vec4 FragPosLightSpace;
 
 
 uniform mat4 view;
 uniform mat4 projection;
-uniform float time;
+uniform vec3 sunColor;
+uniform float ambientStrength;
+uniform mat4 lightSpaceMatrix;
 
 // Array of possible normals based on direction
 const vec3 normals[] = vec3[](
@@ -29,8 +34,10 @@ vec3( 0,  0,  0)  // 6 PLACEHOLDER
 void main()
 {
 	gl_Position = projection * view * vec4(aPos, 1.0);
+	FragPos = aPos;
 	TexCoord = vec3(aTexCoord, float(aLayerIndex));
 	Normal = normals[aDirection];
+	FragPosLightSpace = lightSpaceMatrix * vec4(aPos, 1.0);
 	
 	// Unpack light levels (0-15)
 	int sky = (aLightLevel >> 4) & 0xF;

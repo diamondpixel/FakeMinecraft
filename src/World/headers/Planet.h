@@ -60,6 +60,19 @@ public:
      * @param updateOcclusion If true, issues new hardware occlusion queries.
      */
     void update(const glm::vec3& cameraPos, bool updateOcclusion = true);
+    
+    /**
+     * @brief Renders the scene from the light's perspective to the shadow map.
+     * @param shader The shadow depth shader.
+     */
+    void renderShadows(Shader* shader);
+
+    // Shadow Mapping Resources
+    unsigned int depthMapFBO = 0;
+    unsigned int depthMap = 0;
+    const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
+    float shadowDistance = 1100.0f; // Distance for shadow frustum
+    glm::mat4 lightSpaceMatrix;
 
     /**
      * @brief Updates the frustum state for culling.

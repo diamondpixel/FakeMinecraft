@@ -183,6 +183,17 @@ private:
     std::string window_name;
     unsigned int outlineVAO = 0;
     unsigned int outlineVBO = 0;
+
+    // MSAA Resources
+    unsigned int multisampledFBO = 0;
+    unsigned int rbo = 0;
+    unsigned int intermediateFBO = 0;
+    unsigned int screenTexture = 0; // The final texture to blit to
+    
+    // Shadow Shader
+    Shader* shadowShader = nullptr;
+    
+    void initializeMSAA();
     /** @} */
 };
 

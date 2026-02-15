@@ -7,15 +7,19 @@ layout (location = 3) in int aLayerIndex;
 layout (location = 4) in int aLightLevel;
 layout (location = 5) in int aTop;
 
-out vec3 TexCoord;
+out vec3 FragPos;
 out vec3 Normal;
+out vec3 TexCoord;
 out float vSkyLight;
 out float vBlockLight;
+out float Visibility;
+out vec4 FragPosLightSpace;
 
 
 uniform mat4 view;
 uniform mat4 projection;
 uniform float time;
+uniform mat4 lightSpaceMatrix;
 
 // Array of possible normals based on direction
 const vec3 normals[] = vec3[](
@@ -50,6 +54,7 @@ void main()
 	
 	int direction = clamp(aDirection, 0, 6);
 	Normal = normalize(normals[direction]);
+	FragPosLightSpace = lightSpaceMatrix * vec4(pos, 1.0);
 	
 	int sky = (aLightLevel >> 4) & 0xF;
 	int block = aLightLevel & 0xF;
