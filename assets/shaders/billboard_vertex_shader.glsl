@@ -15,11 +15,14 @@ out vec4 FragPosLightSpace;
 uniform mat4 view;
 uniform mat4 projection;
 uniform mat4 lightSpaceMatrix;
+uniform vec4 clipPlane;
 
 void main()
 {
-	gl_Position = projection * view * vec4(aPos, 1.0);
-	FragPos = vec3(vec4(aPos.x, aPos.y, aPos.z, 1.0));
+	vec4 worldPos = vec4(aPos, 1.0);
+	gl_ClipDistance[0] = dot(worldPos, clipPlane);
+	gl_Position = projection * view * worldPos;
+	FragPos = vec3(worldPos);
     FragPosLightSpace = lightSpaceMatrix * vec4(FragPos, 1.0);
 	TexCoord = vec3(aTexCoord, float(aLayerIndex));
 	Normal = vec3(0.0, 1.0, 0.0); // Billboard uses upward normal for lighting

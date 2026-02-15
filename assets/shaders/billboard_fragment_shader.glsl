@@ -15,6 +15,7 @@ layout(binding = 0) uniform sampler2DArray tex;
 uniform vec3 sunDirection;
 uniform vec3 sunColor;
 uniform float ambientStrength;
+uniform vec4 clipPlane;
 
 float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
@@ -37,6 +38,10 @@ float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 
 void main()
 {
+    // Manual clipping for reflection pass
+    if (dot(vec4(FragPos, 1.0), clipPlane) < 0.0)
+        discard;
+
 	vec4 texResult = texture(tex, TexCoord); 
 	if(texResult.a < 0.1)
 		discard;

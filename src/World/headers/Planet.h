@@ -74,6 +74,21 @@ public:
     float shadowDistance = 1100.0f; // Distance for shadow frustum
     glm::mat4 lightSpaceMatrix;
 
+    // Reflection Resources
+    unsigned int reflectionFBO = 0;
+    unsigned int reflectionTexture = 0;
+    unsigned int reflectionDepthRBO = 0;
+    const unsigned int REFLECTION_WIDTH = 1024, REFLECTION_HEIGHT = 1024;
+    glm::mat4 reflectionViewProjection;  // For water shader
+    
+    /**
+     * @brief Renders the scene for water reflection.
+     * @param cameraPos Current camera position.
+     * @param cameraFront Current camera front vector.
+     * @param aspectRatio Aspect ratio of the window.
+     */
+    void renderReflection(const glm::vec3& cameraPos, const glm::vec3& cameraFront, float aspectRatio);
+
     /**
      * @brief Updates the frustum state for culling.
      * @param frustumVP The view-projection matrix used for culling (can be frozen).

@@ -64,11 +64,39 @@ Planet::Planet(Shader *solidShader, Shader *waterShader, Shader *billboardShader
     glDrawBuffer(GL_NONE);
     glReadBuffer(GL_NONE);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Initialize Reflection FBO
+    glGenFramebuffers(1, &reflectionFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, reflectionFBO);
+    glGenTextures(1, &reflectionTexture);
+    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, REFLECTION_WIDTH, REFLECTION_HEIGHT, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, reflectionTexture, 0);
+    
+    // Depth renderbuffer for correct depth testing
+    glGenRenderbuffers(1, &reflectionDepthRBO);
+    glBindRenderbuffer(GL_RENDERBUFFER, reflectionDepthRBO);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, REFLECTION_WIDTH, REFLECTION_HEIGHT);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, reflectionDepthRBO);
+    
+    // Check if FBO is complete
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cerr << "ERROR::FRAMEBUFFER:: Reflection Framebuffer is not complete!" << std::endl;
+        
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 Planet::~Planet() {
     glDeleteFramebuffers(1, &depthMapFBO);
     glDeleteTextures(1, &depthMap);
+    
+    glDeleteFramebuffers(1, &reflectionFBO);
+    glDeleteTextures(1, &reflectionTexture);
+    glDeleteRenderbuffers(1, &reflectionDepthRBO);
 
     shouldEnd.store(true, std::memory_order_release);
     if (chunkThread.joinable()) {
@@ -422,6 +450,101 @@ void Planet::renderShadows(Shader* shader) {
              chunk->renderAllBillboard();
         }
     }
+}
+
+
+void Planet::renderReflection(const glm::vec3 &cameraPos, const glm::vec3 &cameraFront, float aspectRatio) {
+    glViewport(0, 0, REFLECTION_WIDTH, REFLECTION_HEIGHT);
+    glBindFramebuffer(GL_FRAMEBUFFER, reflectionFBO);
+    
+    // Clear with Sky Color
+    glClearColor(0.5f, 0.7f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    
+    const float waterLevel = 64.0f; // HARDCODED for now, matching WorldConstants
+    
+    // Calculate Reflection Camera
+    glm::vec3 reflectPos = cameraPos;
+    reflectPos.y = waterLevel - (cameraPos.y - waterLevel);
+    
+    // Reflect front vector: invert Y component
+    glm::vec3 reflectFront = cameraFront;
+    reflectFront.y = -reflectFront.y;
+    
+    glm::mat4 view = glm::lookAt(reflectPos, reflectPos + reflectFront, glm::vec3(0, 1, 0));
+    // Match Main Camera's Reverse-Z Projection (Near=10000, Far=0.1)
+    glm::mat4 projection = glm::perspective(glm::radians(90.0f), aspectRatio, 10000.0f, 0.1f);
+    
+    // Store for water shader to use during main pass
+    reflectionViewProjection = projection * view;
+    
+    // Create Reflection Frustum for Culling
+    Frustum reflectionFrustum;
+    reflectionFrustum.update(projection * view);
+
+    // Clip Plane: Keep everything ABOVE water level + small safety margin
+    // Tighter margin to prevent near-water terrain from reflecting
+    glm::vec4 clipPlane = glm::vec4(0.0f, 1.0f, 0.0f, -(waterLevel + 0.5f));
+    
+    // Update Shaders
+    
+    // 1. Render Solid Chunks
+    solidShader->use();
+    (*solidShader)["view"] = view;
+    (*solidShader)["projection"] = projection;
+    (*solidShader)["clipPlane"] = clipPlane;
+    (*solidShader)["lightSpaceMatrix"] = lightSpaceMatrix;
+    
+    // Set up Reverse-Z Depth Testing for Reflection Pass
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_GEQUAL);
+    glClearDepth(0.0f);
+    glClear(GL_DEPTH_BUFFER_BIT); // Clear purely the depth buffer (color already cleared)
+    
+    glCullFace(GL_BACK); 
+    
+    // Iterate over ALL active chunks (renderChunks), not just the ones visible to the main camera
+    const size_t chunkSize = renderChunks.size();
+    for (size_t i = 0; i < chunkSize; ++i) {
+        Chunk *const chunk = renderChunks[i];
+        
+        // Skip if not ready or no solid mesh
+        if (!chunk->ready || !chunk->hasSolid()) continue;
+
+        // Skip chunks that are entirely below water level (prevent underwater geometry in reflection)
+        const float chunkMaxY = chunk->chunkPos.y * CHUNK_HEIGHT + CHUNK_HEIGHT;
+        if (chunkMaxY < waterLevel - 2.0f) continue;  // 2 block margin
+
+        // Perform Frustum Culling against Reflection Frustum
+        if (reflectionFrustum.isBoxVisible(chunk->cullingCenter, chunk->cullingExtents)) {
+            chunk->renderAllSolid();
+        }
+    }
+    
+    // 2. Render Billboards
+    billboardShader->use();
+    (*billboardShader)["view"] = view;
+    (*billboardShader)["projection"] = projection;
+    (*billboardShader)["clipPlane"] = clipPlane;
+    
+    for (size_t i = 0; i < chunkSize; ++i) {
+        Chunk *const chunk = renderChunks[i];
+        
+        if (!chunk->ready || !chunk->hasBillboard()) continue;
+
+        // Skip chunks that are entirely below water level
+        const float chunkMaxY = chunk->chunkPos.y * CHUNK_HEIGHT + CHUNK_HEIGHT;
+        if (chunkMaxY < waterLevel - 2.0f) continue;
+
+        if (reflectionFrustum.isBoxVisible(chunk->cullingCenter, chunk->cullingExtents)) {
+            chunk->renderAllBillboard();
+        }
+    }
+    
+    // Restore State
+    glCullFace(GL_BACK);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 //==============================================================================

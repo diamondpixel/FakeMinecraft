@@ -147,6 +147,17 @@ void GameObject::init() {
         //sky.update(0.1);
         updateWindowTitle();
         
+        // 0. Reflection Pass
+        // -----------------------------------------------------------------
+        Planet::planet->renderReflection(
+            camera.Position, 
+            camera.Front, 
+            static_cast<float>(windowX) / static_cast<float>(windowY)
+        );
+        
+        // Reset Viewport for Shadow Pass
+        // Shadow pass sets its own viewport, but we should be careful.
+        
         // 1. Shadow Pass
         // -----------------------------------------------------------------
         const float shadowDist = Planet::planet->shadowDistance;
@@ -262,9 +273,20 @@ void GameObject::init() {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, Planet::planet->depthMap);
 
+        // Bind reflection map
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, Planet::planet->reflectionTexture);
+
         setupRenderingState(); // Reset state (depth test, etc)
         updateFPSSettings();
         updateShaders(); // Updates lightSpaceMatrix uniform in world shader
+        
+        // Disable clipping for main pass - Use (0,0,0,1) to ensure dot product is positive (1.0)
+        // Using (0,0,0,0) results in gl_ClipDistance = 0.0 which is undefined/z-fighting boundary on some drivers.
+        worldShader->use();
+        (*worldShader)["clipPlane"] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        billboardShader->use();
+        (*billboardShader)["clipPlane"] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
         sky.render(cachedMatrices.view, cachedMatrices.projection, camera.Position);
 
@@ -392,14 +414,17 @@ void GameObject::initializeShaders() {
     worldShader->use();
     (*worldShader)["tex"] = 0; // Explicitly set tex to slot 0
     (*worldShader)["shadowMap"] = 1; // Slot 1
+    (*worldShader)["clipPlane"] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f); // Default: No clipping (+1.0 distance)
 
     billboardShader->use();
     (*billboardShader)["tex"] = 0;
     (*billboardShader)["shadowMap"] = 1;
+    (*billboardShader)["clipPlane"] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
     fluidShader->use();
     (*fluidShader)["tex"] = 0;
     (*fluidShader)["shadowMap"] = 1;
+    (*fluidShader)["reflectionMap"] = 2; // Slot 2
 }
 
 void GameObject::initializeUIElements() {
@@ -562,6 +587,8 @@ void GameObject::updateShaders() {
     (*fluidShader)["sunColor"] = sunCol;
     (*fluidShader)["ambientStrength"] = ambient;
     (*fluidShader)["lightSpaceMatrix"] = Planet::planet->lightSpaceMatrix;
+    (*fluidShader)["reflectionMatrix"] = Planet::planet->reflectionViewProjection;
+    (*fluidShader)["cameraPos"] = camera.Position;
 
     outlineShader->use(true);
     (*outlineShader)["SMART_view"] = view;

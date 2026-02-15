@@ -20,6 +20,7 @@ uniform mat4 projection;
 uniform vec3 sunColor;
 uniform float ambientStrength;
 uniform mat4 lightSpaceMatrix;
+uniform vec4 clipPlane;
 
 // Array of possible normals based on direction
 const vec3 normals[] = vec3[](
@@ -33,7 +34,9 @@ vec3( 0,  0,  0)  // 6 PLACEHOLDER
 );
 void main()
 {
-	gl_Position = projection * view * vec4(aPos, 1.0);
+	vec4 worldPos = vec4(aPos, 1.0);
+	gl_ClipDistance[0] = dot(worldPos, clipPlane);
+	gl_Position = projection * view * worldPos;
 	FragPos = aPos;
 	TexCoord = vec3(aTexCoord, float(aLayerIndex));
 	Normal = normals[aDirection];

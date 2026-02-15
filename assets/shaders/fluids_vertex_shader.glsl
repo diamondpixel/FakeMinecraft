@@ -14,12 +14,14 @@ out float vSkyLight;
 out float vBlockLight;
 out float Visibility;
 out vec4 FragPosLightSpace;
+out vec4 FragPosReflectionSpace;
 
 
 uniform mat4 view;
 uniform mat4 projection;
 uniform float time;
 uniform mat4 lightSpaceMatrix;
+uniform mat4 reflectionMatrix;
 
 // Array of possible normals based on direction
 const vec3 normals[] = vec3[](
@@ -46,6 +48,7 @@ void main()
 	}
 	
 	gl_Position = projection * view * vec4(pos, 1.0);
+	FragPos = pos;  // World-space position for reflection projection
 	
 	float frame = mod(time / animationTime, 1.0) * aFrames;
     int currentLayer = aLayerIndex + int(floor(frame));
@@ -55,6 +58,7 @@ void main()
 	int direction = clamp(aDirection, 0, 6);
 	Normal = normalize(normals[direction]);
 	FragPosLightSpace = lightSpaceMatrix * vec4(pos, 1.0);
+	FragPosReflectionSpace = reflectionMatrix * vec4(pos, 1.0);
 	
 	int sky = (aLightLevel >> 4) & 0xF;
 	int block = aLightLevel & 0xF;

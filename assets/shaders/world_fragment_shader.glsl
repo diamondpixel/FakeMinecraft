@@ -2,6 +2,7 @@
 
 in vec3 TexCoord;
 in vec3 Normal;
+in vec3 FragPos; // Added for manual clipping
 in float vSkyLight;
 in float vBlockLight;
 // Shadow calculation variables
@@ -13,6 +14,7 @@ layout(binding = 1) uniform sampler2D shadowMap;
 uniform vec3 sunDirection;
 uniform vec3 sunColor;
 uniform float ambientStrength;
+uniform vec4 clipPlane;
 
 float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
@@ -57,6 +59,10 @@ float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 
 void main()
 {
+    // Manual clipping for reflection pass
+    if (dot(vec4(FragPos, 1.0), clipPlane) < 0.0)
+        discard;
+
 	// Directional sun light
 	vec3 lightDir = normalize(-sunDirection); // SunDirection points FROM the sun. Negate to point TO sun.
 	float diff = max(dot(Normal, lightDir), 0.0);

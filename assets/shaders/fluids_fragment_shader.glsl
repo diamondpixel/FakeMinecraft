@@ -7,14 +7,18 @@ in float vSkyLight;
 in float vBlockLight;
 in float Visibility;
 in vec4 FragPosLightSpace;
+in vec4 FragPosReflectionSpace;
 layout(binding = 1) uniform sampler2D shadowMap;
 
 out vec4 FragColor;
 
 layout(binding = 0) uniform sampler2DArray tex;
+layout(binding = 2) uniform sampler2D reflectionMap;
 uniform vec3 sunDirection;
 uniform vec3 sunColor;
 uniform float ambientStrength;
+uniform vec3 cameraPos;
+uniform float time;
 
 float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
@@ -53,5 +57,42 @@ void main()
 	if (texResult.a < 0.1)
 		discard;
 	
-	FragColor = vec4(totalLight * texResult.rgb, texResult.a);
+	// === REFLECTION ===
+	
+	// Project fragment into reflection camera space
+    vec3 reflectionNDC = FragPosReflectionSpace.xyz / FragPosReflectionSpace.w;
+    vec2 reflectionUV = reflectionNDC.xy * 0.5 + 0.5;
+    
+    // Wave-based distortion for natural look
+    float wave1 = sin(FragPos.x * 0.8 + time * 0.7) * 0.003;
+    float wave2 = sin(FragPos.z * 1.2 + time * 0.5) * 0.003;
+    reflectionUV += vec2(wave1, wave2);
+    
+    reflectionUV = clamp(reflectionUV, 0.001, 0.999);
+    
+	vec3 reflectionColor = texture(reflectionMap, reflectionUV).rgb;
+	
+	// Tint reflection with water color
+	vec3 waterTint = vec3(0.3, 0.5, 0.7);
+	reflectionColor = mix(reflectionColor, reflectionColor * waterTint, 0.3);
+	
+	// === FRESNEL (Schlick approximation) ===
+	// Softer curve so reflections are visible from normal viewing angles
+	vec3 viewDir = normalize(cameraPos - FragPos);
+	float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 2.0);
+	fresnel = clamp(fresnel, 0.15, 0.65);  // Min 15%, max 65% reflection
+	
+	// Fade reflections when there is no light (nighttime)
+	float sunBrightness = length(sunColor);
+	fresnel *= clamp(sunBrightness, 0.0, 1.0);
+	
+	// === FINAL COMPOSITE ===
+	vec3 waterColor = totalLight * texResult.rgb;
+	
+	if(texResult.a > 0.5 && fresnel > 0.01) {
+        vec3 finalRGB = mix(waterColor, reflectionColor, fresnel);
+        FragColor = vec4(finalRGB, texResult.a);
+	} else {
+	    FragColor = vec4(waterColor, texResult.a);
+	}
 }
