@@ -185,3 +185,110 @@ Physics::RaycastResult Physics::raycast(const glm::vec3 &startPos, const glm::ve
         0, 0, 0
     };
 }
+
+// ============================================================================
+// COLLISION DETECTION
+// ============================================================================
+
+bool Physics::isSolidBlock(int x, int y, int z) {
+    const int chunkX = worldToChunkCoord(static_cast<float>(x), CHUNK_WIDTH);
+    const int chunkY = worldToChunkCoord(static_cast<float>(y), CHUNK_HEIGHT);
+    const int chunkZ = worldToChunkCoord(static_cast<float>(z), CHUNK_WIDTH);
+
+    Chunk* chunk = Planet::planet->getChunk(ChunkPos(chunkX, chunkY, chunkZ));
+    if (!chunk) return false;
+
+    const int localX = x - chunkX * CHUNK_WIDTH;
+    const int localY = y - chunkY * CHUNK_HEIGHT;
+    const int localZ = z - chunkZ * CHUNK_WIDTH;
+
+    if (localX < 0 || localX >= CHUNK_WIDTH ||
+        localY < 0 || localY >= CHUNK_HEIGHT ||
+        localZ < 0 || localZ >= CHUNK_WIDTH) {
+        return false;
+    }
+
+    const unsigned int block = chunk->getBlockAtPos(localX, localY, localZ);
+    if (block == 0) return false;
+
+    const Block& blockData = BlockRegistry::getInstance().getBlock(block);
+    // Only SOLID, TRANSPARENT, and LEAVES cause collision
+    return (blockData.blockType != Block::LIQUID && blockData.blockType != Block::BILLBOARD);
+}
+
+/**
+ * @brief Resolves player AABB collisions one axis at a time.
+ *
+ * This approach prevents the player from tunneling through corners by
+ * checking each axis independently and correcting the position before
+ * moving to the next axis.
+ */
+Physics::CollisionResult Physics::resolveCollisions(
+    const glm::vec3& oldPos, const glm::vec3& newPos, const glm::vec3& halfExtents)
+{
+    CollisionResult result;
+    result.position = newPos;
+    result.onGround = false;
+    result.hitCeiling = false;
+    result.hitWallX = false;
+    result.hitWallZ = false;
+
+    // Helper lambda: check all voxels overlapping an AABB for solidity
+    auto checkAABB = [&](const glm::vec3& pos) -> bool {
+        const int minX = fastFloor(pos.x - halfExtents.x + 0.001f);
+        const int maxX = fastFloor(pos.x + halfExtents.x - 0.001f);
+        const int minY = fastFloor(pos.y - halfExtents.y + 0.001f);
+        const int maxY = fastFloor(pos.y + halfExtents.y - 0.001f);
+        const int minZ = fastFloor(pos.z - halfExtents.z + 0.001f);
+        const int maxZ = fastFloor(pos.z + halfExtents.z - 0.001f);
+
+        for (int bx = minX; bx <= maxX; ++bx) {
+            for (int by = minY; by <= maxY; ++by) {
+                for (int bz = minZ; bz <= maxZ; ++bz) {
+                    if (isSolidBlock(bx, by, bz)) return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    // Resolve Y axis first (gravity is the most important)
+    glm::vec3 testPos = glm::vec3(oldPos.x, newPos.y, oldPos.z);
+    if (checkAABB(testPos)) {
+        // Collision on Y axis - snap to nearest block boundary
+        if (newPos.y < oldPos.y) {
+            // Falling down - snap feet to top of block below
+            const int groundBlockY = fastFloor(newPos.y - halfExtents.y + 0.001f);
+            result.position.y = static_cast<float>(groundBlockY + 1) + halfExtents.y;
+            result.onGround = true;
+        } else {
+            // Moving up - snap head to bottom of block above
+            const int ceilBlockY = fastFloor(newPos.y + halfExtents.y - 0.001f);
+            result.position.y = static_cast<float>(ceilBlockY) - halfExtents.y;
+            result.hitCeiling = true;
+        }
+    }
+
+    // Resolve X axis
+    testPos = glm::vec3(newPos.x, result.position.y, oldPos.z);
+    if (checkAABB(testPos)) {
+        result.position.x = oldPos.x;
+        result.hitWallX = true;
+    }
+
+    // Resolve Z axis
+    testPos = glm::vec3(result.position.x, result.position.y, newPos.z);
+    if (checkAABB(testPos)) {
+        result.position.z = oldPos.z;
+        result.hitWallZ = true;
+    }
+
+    // Final ground check (for when standing still or moving horizontally)
+    if (!result.onGround) {
+        glm::vec3 groundTest = result.position;
+        groundTest.y -= 0.01f;
+        result.onGround = checkAABB(groundTest);
+    }
+
+    return result;
+}

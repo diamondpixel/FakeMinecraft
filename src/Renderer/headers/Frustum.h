@@ -8,7 +8,8 @@
     #define FRUSTUM_USE_SIMD 1
 #endif
 
- * Objects behind the camera are not drawn to save processing time. The mathematical 
+/*
+ * Objects behind the camera are not drawn to save processing time. The mathematical
  * planes are extracted and checked using fast instructions if the computer supports them.
  * Reference: http://gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
  */

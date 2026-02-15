@@ -10,6 +10,7 @@
 #include "Physics.h"
 #include "Slider.h"
 #include "TypeBox.h"
+#include "Button.h"
 #include "Sky.h"
 
 // Forward declarations
@@ -24,8 +25,16 @@ enum GameStateEnum {
     PAUSED
 };
 
+// Menu state enum
+enum class MenuState {
+    MAIN,
+    VIDEO,
+    GAME
+};
+
 struct GameState {
     GameStateEnum state = PAUSED;
+    MenuState menuState = MenuState::MAIN;
     uint16_t selectedBlock = 1;
 };
 
@@ -84,6 +93,7 @@ private:
     void initializeShaders();
     void initializeUIElements();
     void initializeOutlineVAO();
+    void initializePlayerModel();
     /** @} */
 
     /** @name Live Update Systems @{ */
@@ -95,6 +105,8 @@ private:
     static void updateWindowTitle();
     /// Synchronizes the graphics engine with the user-selected FPS cap or VSync.
     void updateFPSSettings() const;
+    /// Updates player physics (gravity, collision) when noclip is disabled.
+    void updatePlayerPhysics(float deltaTime);
     /** @} */
 
     /** @name Input Callbacks @{ */
@@ -111,6 +123,10 @@ private:
     void renderCrosshair() const;
     void renderDebugInfo() const;
     void renderPauseMenu() const;
+    void renderMainMenu() const;
+    void renderVideoSettings() const;
+    void renderGameSettings() const;
+    void renderPlayerModel();
     /** @} */
 
     /** @name Block Interaction Logic @{ */
@@ -160,6 +176,22 @@ private:
     glm::mat4 savedViewProjection;
     /** @} */
 
+    /** @name Player Physics State @{ */
+    bool noclipEnabled = true;          ///< If true, player can fly through blocks (Creative/Spectator).
+    glm::vec3 playerVelocity{0.0f};     ///< Current velocity vector for physics simulation.
+    bool playerOnGround = false;        ///< True when the player is standing on solid ground.
+    bool superJumpEnabled = false;
+    bool uncapSpeedEnabled = false;
+    /** @} */
+
+    /** @name Player Model @{ */
+    unsigned int playerModelVAO = 0;
+    unsigned int playerModelVBO = 0;
+    unsigned int playerModelEBO = 0;
+    unsigned int playerModelIndexCount = 0;
+    Shader* playerModelShader = nullptr;
+    /** @} */
+
     /** @name Shader Handles @{ */
     Shader* worldShader = nullptr;
     Shader* billboardShader = nullptr;
@@ -173,9 +205,24 @@ private:
 
     /** @name UI Components @{ */
     Checkbox fullscreenCheckBox;
+    Checkbox superJumpBox;
+    Checkbox uncapSpeedBox;
     Slider fpsSlider;
     Slider renderDistanceSlider;
     TypeBox seedBox;
+    
+    // New Menu UI
+    Button videoSettingsBtn;
+    Button gameSettingsBtn;
+    Button backBtn;
+    Button quitBtn; // Optional
+    
+    Checkbox dynamicShadowsBox;
+    Checkbox msaaBox;
+
+    bool dynamicShadowsEnabled = true;
+    bool msaaEnabled = true;
+    bool simpleLightingEnabled = false;
     /** @} */
 
     /** @name Resource Identifiers @{ */
@@ -187,6 +234,7 @@ private:
     unsigned int multisampledFBO = 0;
     unsigned int rbo = 0;
     unsigned int intermediateFBO = 0;
+    unsigned int intermediateRBO = 0;
     unsigned int screenTexture = 0; // The final texture to blit to
     
     // Shadow Shader

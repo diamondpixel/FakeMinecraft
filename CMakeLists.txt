@@ -4,7 +4,7 @@ project(CPP_GAME)
 # Import the PowerShell script
 include(${CMAKE_SOURCE_DIR}/CMakeScripts/PowerShell.cmake)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(DEP_LIB ${CMAKE_SOURCE_DIR}/dependencies/lib)
 set(ASSETS_DIR "${CMAKE_SOURCE_DIR}/assets")
 set(APP_ICON "${CMAKE_SOURCE_DIR}/assets/sprites/logo.ico"

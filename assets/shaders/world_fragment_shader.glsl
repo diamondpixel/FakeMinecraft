@@ -15,6 +15,7 @@ uniform vec3 sunDirection;
 uniform vec3 sunColor;
 uniform float ambientStrength;
 uniform vec4 clipPlane;
+uniform int simpleLighting;
 
 float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
@@ -68,11 +69,19 @@ void main()
 	vec3 lightDir = normalize(-sunDirection); 
 	float diff = max(dot(Normal, lightDir), 0.0);
 	
-	// Calculate shadow
-	float shadow = calculateShadow(FragPosLightSpace, Normal, lightDir);
+	float shadow = 0.0;
+	vec3 diffuse = vec3(0.0);
 
-	// Apply shadow to diffuse light
-	vec3 diffuse = diff * sunColor * (1.0 - shadow);
+	if (simpleLighting == 1) {
+	    // Simple Lighting: Skip shadow map, use vertex light level (vSkyLight)
+	    // Mimic classic voxel lighting: Sunlight intensity * Light Level * Face Shade
+	    diffuse = diff * sunColor * vSkyLight;
+	} else {
+    	// Calculate shadow
+    	shadow = calculateShadow(FragPosLightSpace, Normal, lightDir);
+    	// Apply shadow to diffuse light
+    	diffuse = diff * sunColor * (1.0 - shadow);
+	}
 
 	// Ambient (sky contribution)
 	vec3 ambient = vec3(ambientStrength);

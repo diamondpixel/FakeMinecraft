@@ -19,6 +19,7 @@ uniform vec3 sunColor;
 uniform float ambientStrength;
 uniform vec3 cameraPos;
 uniform float time;
+uniform int simpleLighting;
 
 float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
@@ -44,8 +45,15 @@ void main()
 	vec3 normal = normalize(Normal);
 	float diff = max(dot(normal, lightDir), 0.0);
 	
-	float shadow = calculateShadow(FragPosLightSpace, normal, lightDir);
-	vec3 diffuse = diff * sunColor * vSkyLight * (1.0 - shadow);
+	float shadow = 0.0;
+	vec3 diffuse = vec3(0.0);
+
+    if (simpleLighting == 1) {
+        diffuse = diff * sunColor * vSkyLight;
+    } else {
+    	shadow = calculateShadow(FragPosLightSpace, normal, lightDir);
+    	diffuse = diff * sunColor * vSkyLight * (1.0 - shadow);
+    }
 
 	vec3 ambient = vec3(ambientStrength);
 	vec3 blockLight = vBlockLight * vec3(1.0, 0.85, 0.6);

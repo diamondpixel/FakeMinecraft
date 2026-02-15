@@ -55,9 +55,9 @@ void Chunk::generateChunkMesh() {
 
 void Chunk::generateHorizontalFaces(unsigned int* currentVertex) {
     // Mask arrays for greedy meshing (reused per slice)
-    static thread_local uint16_t topMask[CHUNK_WIDTH][CHUNK_WIDTH];
-    static thread_local uint16_t bottomMask[CHUNK_WIDTH][CHUNK_WIDTH];
-    static thread_local bool processed[CHUNK_WIDTH][CHUNK_WIDTH];
+    thread_local uint16_t topMask[CHUNK_WIDTH][CHUNK_WIDTH];
+    thread_local uint16_t bottomMask[CHUNK_WIDTH][CHUNK_WIDTH];
+    thread_local bool processed[CHUNK_WIDTH][CHUNK_WIDTH];
     
     // Thread-safe capture
     auto localData = chunkData;

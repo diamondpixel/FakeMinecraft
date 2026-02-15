@@ -55,6 +55,7 @@ public:
                                bool processed[][CHUNK_WIDTH], unsigned int* currentVertex);
 
     // Vertical faces (NORTH/SOUTH/EAST/WEST) with greedy meshing
+    void generateHorizontalFaces(unsigned int* currentVertex);
     void generateVerticalFaces(unsigned int* currentVertex);
     void generateZAxisFaces(unsigned int* currentVertex, uint16_t maskA[][CHUNK_HEIGHT],
                            uint16_t maskB[][CHUNK_HEIGHT], bool processedSide[][CHUNK_HEIGHT]);

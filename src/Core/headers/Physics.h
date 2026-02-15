@@ -90,4 +90,38 @@ namespace Physics
 	 * @deprecated Use Physics::raycast for pixel-perfect voxel intersection.
 	 */
 	static constexpr float RAY_STEP = 0.01f;
+
+	/**
+	 * @brief Checks if a block at the given world coordinates is solid (not air, not liquid, not billboard).
+	 * @param x World-space block X coordinate.
+	 * @param y World-space block Y coordinate.
+	 * @param z World-space block Z coordinate.
+	 * @return True if the block is solid and should cause collision.
+	 */
+	bool isSolidBlock(int x, int y, int z);
+
+	/**
+	 * @struct CollisionResult
+	 * @brief Result of an AABB collision resolution against the voxel world.
+	 */
+	struct CollisionResult {
+		glm::vec3 position;   ///< Corrected position after collision resolution.
+		bool onGround;        ///< True if the player is standing on a solid surface.
+		bool hitCeiling;      ///< True if the player hit a ceiling.
+		bool hitWallX;        ///< True if collided on X axis.
+		bool hitWallZ;        ///< True if collided on Z axis.
+	};
+
+	/**
+	 * @brief Resolves AABB collisions against the voxel world using a sweep-and-resolve approach.
+	 *
+	 * The player is treated as an axis-aligned bounding box (AABB). Movement is resolved
+	 * one axis at a time (Y first for gravity, then X and Z) to prevent tunneling.
+	 *
+	 * @param oldPos The player's position before movement.
+	 * @param newPos The player's desired position after movement.
+	 * @param halfExtents Half-size of the player's bounding box (width/2, height/2, depth/2).
+	 * @return A CollisionResult with the corrected position and contact flags.
+	 */
+	CollisionResult resolveCollisions(const glm::vec3& oldPos, const glm::vec3& newPos, const glm::vec3& halfExtents);
 }

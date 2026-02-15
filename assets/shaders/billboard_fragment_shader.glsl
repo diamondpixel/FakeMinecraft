@@ -16,6 +16,7 @@ uniform vec3 sunDirection;
 uniform vec3 sunColor;
 uniform float ambientStrength;
 uniform vec4 clipPlane;
+uniform int simpleLighting;
 
 float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
@@ -53,8 +54,15 @@ void main()
 	float diff = max(dot(norm, lightDir), 0.0);
 	
 	// Shadows disabled on billboards (grass/trees) - visually distracting
-	float shadow = 0.0; // calculateShadow(FragPosLightSpace, norm, lightDir);
-	vec3 diffuse = diff * sunColor * (1.0 - shadow);
+	float shadow = 0.0; 
+	vec3 diffuse = vec3(0.0);
+
+    if (simpleLighting == 1) {
+         diffuse = diff * sunColor * vSkyLight;
+    } else {
+    	 // calculateShadow(FragPosLightSpace, norm, lightDir);
+    	 diffuse = diff * sunColor * (1.0 - shadow);
+    }
 	
 	vec3 result = (ambient + diffuse) * texResult.rgb;
 	FragColor = vec4(result, texResult.a);
