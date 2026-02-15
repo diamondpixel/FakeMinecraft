@@ -8,32 +8,24 @@
     #define FRUSTUM_USE_SIMD 1
 #endif
 
-/**
- * @class Frustum
- * @brief High-performance Frustum Culling class using SIMD optimizations.
- * 
- * This class implements a View Frustum used to determine if an Axis-Aligned Bounding Box (AABB) 
- * is visible within the camera's field of view. It uses the Gribb/Hartmann method for plane 
- * extraction and provides a SIMD-accelerated visibility test using SSE/AVX and SoA (Structure of Arrays) 
- * layout for maximum throughput.
+ * Objects behind the camera are not drawn to save processing time. The mathematical 
+ * planes are extracted and checked using fast instructions if the computer supports them.
+ * Reference: http://gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
  */
 class Frustum {
 public:
     /**
-     * @brief Extracts frustum planes from a View-Projection matrix.
+     * @brief Extraction of 6 planes from the world camera matrices.
      * 
-     * The method extracts 6 planes (Left, Right, Bottom, Top, Near, Far) and normalizes them.
-     * The planes are stored in a Structure of Arrays (SoA) format and padded to 8 entries
-     * to allow branchless SIMD processing.
-     * 
+     * The data is stored in a way that allows the computer to check multiple planes 
+     * at the same time.
      * @param vp The combined View-Projection matrix.
      */
     void update(const glm::mat4 &vp) {
         // Extract planes using Gribb/Hartmann method
         // Left, Right, Bottom, Top, Near, Far
 
-        // OPTIMIZATION: Direct extraction without intermediate array
-        // and inline normalization
+        // Direct extraction and inline normalization are performed for simplicity.
         auto extractAndNormalize = [&vp](int col, float sign, int) {
             const float x = vp[0][3] + sign * vp[0][col];
             const float y = vp[1][3] + sign * vp[1][col];
@@ -53,7 +45,7 @@ public:
             extractAndNormalize(2, -1.0f, 5)   // Far
         };
 
-        // Store in SoA layout for SIMD efficiency
+        // Store the data in groups for efficiency
         for (int i = 0; i < 6; ++i) {
             planesX[i] = planes[i].x;
             planesY[i] = planes[i].y;
@@ -61,8 +53,8 @@ public:
             planesW[i] = planes[i].w;
         }
 
-        // OPTIMIZATION: Pad with duplicate of last plane for SIMD alignment
-        // This allows processing 2x4 planes without scalar fallback
+        // The array is padded with duplicates of the last plane to reach 8 entries.
+        // This allows for processing in groups of 4 without extra logic.
         planesX[6] = planesX[7] = planes[5].x;
         planesY[6] = planesY[7] = planes[5].y;
         planesZ[6] = planesZ[7] = planes[5].z;
@@ -70,17 +62,13 @@ public:
     }
 
     /**
-     * @brief Performs a high-performance visibility test for an AABB.
+     * @brief This function checks if a box is inside the camera's view.
      * 
-     * Determines if a box defined by its center and extents is inside, intersecting, 
-     * or outside the frustum.
-     * 
-     * Optimization techniques:
-     * - **SIMD (SSE/AVX)**: Processes 4 planes simultaneously.
-     * - **SoA Layout**: Maximizes cache hit rate and SIMD utilization.
-     * - **FMA (Fused Multiply-Add)**: Used for faster dot product calculation if supported.
-     * - **Branchless**: Logic designed to minimize branching in the hot path.
-     * 
+     * Efficiency considerations:
+     * - **Fast Calculations**: Multiple checks are done at once to save time.
+     * - **Data Layout**: Organized so the computer can load the data quickly.
+     * - **Optimized Math**: Uses faster hardware features if available.
+     * - **Clean Logic**: Minimized extra checks in the code that runs every frame.
      * @param center The center of the AABB in world space.
      * @param extents The half-extents (dimensions divided by 2) of the AABB.
      * @return true if the box is visible (inside or intersecting), false if culled.
@@ -95,14 +83,14 @@ public:
         const __m128 ey = _mm_set1_ps(extents.y);
         const __m128 ez = _mm_set1_ps(extents.z);
 
-        // OPTIMIZATION: Sign mask for fast absolute value
+        // A mask to get the absolute value quickly.
         const __m128 signMask = _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF));
 
         // Accumulator for rejection test (OR all comparisons)
         __m128 anyReject = _mm_setzero_ps();
 
-        // OPTIMIZATION: Process all 8 planes (6 real + 2 padding) in 2 batches
-        // This eliminates scalar fallback entirely
+        // All 8 planes (including the 2 extra ones) are checked in two batches of 4.
+        // This approach simplifies the loop structure.
         for (int i = 0; i < 8; i += 4) {
             // Load 4 planes at once
             const __m128 px = _mm_load_ps(&planesX[i]);
@@ -117,7 +105,7 @@ public:
             const __m128 abs_pz = _mm_and_ps(pz, signMask);
 
 #if defined(__FMA__) || defined(__AVX2__)
-            // OPTIMIZATION: Use FMA for 2x throughput on modern CPUs
+            // Modern computers can do these calculations even faster.
             __m128 r = _mm_mul_ps(ex, abs_px);
             r = _mm_fmadd_ps(ey, abs_py, r);
             r = _mm_fmadd_ps(ez, abs_pz, r);
@@ -145,8 +133,7 @@ public:
             anyReject = _mm_or_ps(anyReject, cmp);
         }
 
-        // OPTIMIZATION: Single movemask at end instead of per-iteration
-        // Check only first 6 bits (ignore padding planes 6-7)
+        // Only the first 6 planes are needed (the rest were just for padding).
         const int mask = _mm_movemask_ps(anyReject);
         return (mask & 0x3F) == 0;  // Test only bits 0-5 (6 real planes)
 
@@ -166,9 +153,7 @@ public:
     }
 
 private:
-    /// Frustum plane coefficients in Structure of Arrays (SoA) layout.
-    /// Padded to 8 for SIMD alignment and branchless processing.
-    /// 32-byte alignment allows for AVX optimizations.
+    /// Data is organized for fast loading by the computer.
     alignas(32) float planesX[8] = {};
     alignas(32) float planesY[8] = {};
     alignas(32) float planesZ[8] = {};

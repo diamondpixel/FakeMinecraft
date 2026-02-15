@@ -25,9 +25,9 @@ void main()
 	FragPos = vec3(worldPos);
     FragPosLightSpace = lightSpaceMatrix * vec4(FragPos, 1.0);
 	TexCoord = vec3(aTexCoord, float(aLayerIndex));
-	Normal = vec3(0.0, 1.0, 0.0); // Billboard uses upward normal for lighting
+	Normal = vec3(0.0, 1.0, 0.0); // Simple upward-pointing normal for lighting.
 	
-	// Unpack light levels (0-15)
+	// Get the lighting values from the packed data.
 	int sky = (aLightLevel >> 4) & 0xF;
 	int block = aLightLevel & 0xF;
 	

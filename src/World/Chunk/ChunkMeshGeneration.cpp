@@ -8,7 +8,7 @@
 void Chunk::generateChunkMesh() {
     if (!chunkData) return;
 
-    // Compute block lighting (BFS from emissive blocks like lava)
+    // Work out how light spreads from glowing blocks like lava.
     computeLightMap();
 
     // Cache neighbor chunks for lighting at boundaries
@@ -41,10 +41,10 @@ void Chunk::generateChunkMesh() {
     unsigned int currentLiquidVertex[NUM_SUBCHUNKS] = {};
     unsigned int currentBillboardVertex[NUM_SUBCHUNKS] = {};
 
-    // Generate greedy-meshed horizontal faces
+    // Combine flat surfaces to save time.
     generateHorizontalFaces(currentVertex);
 
-    // Generate greedy-meshed vertical faces
+    // Combine vertical surfaces to save time.
     generateVerticalFaces(currentVertex);
 
     // Generate non-solid blocks (fluids, billboards, transparent)

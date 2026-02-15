@@ -1,3 +1,7 @@
+/**
+ * @file WorldVertex.h
+ * @brief Vertex structure for standard opaque blocks.
+ */
 #pragma once
 
 #include "_Vertex.h"

@@ -29,8 +29,7 @@ struct ChunkData {
     }
 
     uint16_t getBlock(const int x, const int y, const int z) const {
-        // Safety check for debugging (can be removed for release)
-        // if (x < 0 || x >= CHUNK_WIDTH || z < 0 || z >= CHUNK_WIDTH || y < 0 || y >= CHUNK_HEIGHT) return 0;
+
         return data[getIndex(x, y, z)];
     }
 

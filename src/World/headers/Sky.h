@@ -1,6 +1,6 @@
 /**
  * @file Sky.h
- * @brief Manage atmospheric effects, the day/night cycle, and celestial rendering.
+ * @brief Logic for the sky, day/night cycle, and sun/moon.
  */
 
 #pragma once
@@ -11,13 +11,10 @@
 
 /**
  * @class Sky
- * @brief Handles the background sky color, sun/moon positions, and global ambient lighting.
+ * @brief Manages the sky color and positions of the sun and moon.
  * 
- * The Sky class manages the "Time of Day" logic, which affects the clear color of the scene, 
- * directional lighting for chunks, and the rendering of celestial billboards.
- * 
- * @note **Optimization**: This class caches computed lighting values per frame to avoid 
- * redundant trigonometric calculations across multiple getter calls or rendering passes.
+ * This class keeps track of the time of day and updates the light 
+ * and colors in the world to match.
  */
 class Sky {
 public:
@@ -80,8 +77,7 @@ public:
 
 private:
     /**
-     * @brief Member layout optimized for cache efficiency.
-     * Hot data (accessed every frame) is grouped at the top to reduce cache misses.
+     * Frequent variables are kept together to help with speed.
      */
 
     /** @name Cached Lighting Results @{ */
@@ -100,8 +96,8 @@ private:
 
     bool paused = false; ///< If true, time progression is halted.
 
-    /** @name Cold Data
-     * Resource handles and shaders accessed primarily during init/cleanup.
+    /** @name Resource Data
+     * Handles for textures and shaders.
      * @{
      */
     Shader* skyShader = nullptr;

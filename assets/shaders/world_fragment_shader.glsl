@@ -18,19 +18,20 @@ uniform vec4 clipPlane;
 
 float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
-    // Perspective division
+    // Make objects smaller as they get further away.
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    // Transform to [0,1] range
+    // Map the coordinates so they fit between 0 and 1.
     projCoords = projCoords * 0.5 + 0.5;
     
     // Check if fragment is outside shadow map bounds - return 0.0 (no shadow)
     if(projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0)
         return 0.0;
         
-    // Calculate bias to prevent shadow acne
+    // Add a tiny offset to keep shadows from looking glitchy.
     float bias = max(0.0005 * (1.0 - dot(normal, lightDir)), 0.0001);
     
-    // Poisson disk sampling for smoother shadows (eliminates grid artifacts)
+    // Use a set of random points to smooth out the edges of shadows.
+    // Learned this from: https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows
     vec2 poissonDisk[16] = vec2[](
         vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
         vec2(-0.094184101, -0.92938870), vec2(0.34495938, 0.29387760),
@@ -45,7 +46,7 @@ float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
     
-    // Sample shadow map with Poisson disk pattern (2.5 texel radius)
+    // Check the shadow map multiple times to make the shadow look soft.
     for(int i = 0; i < 16; ++i)
     {
         vec2 offset = poissonDisk[i] * texelSize * 2.5;
@@ -59,12 +60,12 @@ float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 
 void main()
 {
-    // Manual clipping for reflection pass
+    // Don't draw pixels that are below the water line in reflections.
     if (dot(vec4(FragPos, 1.0), clipPlane) < 0.0)
         discard;
 
-	// Directional sun light
-	vec3 lightDir = normalize(-sunDirection); // SunDirection points FROM the sun. Negate to point TO sun.
+	// Calculate the direction of the sunlight.
+	vec3 lightDir = normalize(-sunDirection); 
 	float diff = max(dot(Normal, lightDir), 0.0);
 	
 	// Calculate shadow
@@ -79,7 +80,7 @@ void main()
 	// Block light (lava etc) - warm orange glow
 	vec3 blockLight = vBlockLight * vec3(1.0, 0.85, 0.6);
 
-	// Combine: max of (sun light, block light) + ambient
+	// Find the final light value by choosing the brightest one plus the sky light.
 	vec3 totalLight = ambient + max(diffuse, blockLight);
 	totalLight = clamp(totalLight, 0.0, 1.4);
 

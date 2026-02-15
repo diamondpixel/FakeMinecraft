@@ -6,13 +6,12 @@
 
 /**
  * @file Physics.cpp
- * @brief Implementation of high-performance physics and raycasting for voxel volumes.
+ * @brief This file handles physics and raycasting for our voxel world.
  */
 
 namespace {
     /**
-     * @brief Computes the largest integer less than or equal to x.
-     * Standard std::floor behavior, optimized as a helper for DDA mapping.
+     * @brief A fast floor helper is used to avoid repeated calls to std::floor.
      */
     [[gnu::always_inline]]
     int fastFloor(float x) {
@@ -20,8 +19,8 @@ namespace {
     }
     
     /**
-     * @brief Converts a world-space coordinate to its corresponding chunk grid index.
-     * Optimized to correctly handle negative coordinates using standard flooring.
+     * @brief This helps us get the chunk index from world coordinates.
+     * It handles negative coordinates correctly by using flooring.
      */
     [[gnu::always_inline, msvc::forceinline]]
     int worldToChunkCoord(float worldCoord, int chunkSize) {
@@ -38,14 +37,12 @@ namespace {
 }
 
 /**
- * @brief Performs a high-performance voxel raycast using the Digital Differential Analyzer (DDA) algorithm.
+ * @brief The DDA algorithm is used for raycasting due to its efficiency with voxels.
  * 
- * This implementation is specifically hardened to handle:
- * 1. **Negative Coordinates**: Uses floor-based conversions to ensure consistent chunking globally.
- * 2. **Boundary Precision**: Correctly calculates distances to the next integer boundary 
- *    regardless of the ray's sign.
- * 3. **Chunk Caching**: Minimizes planet-wide chunk lookups by only refreshing the active 
- *    Chunk pointer when mapPos crosses a CHUNK_WIDTH boundary.
+ * This version is adjusted to handle:
+ * 1. **Negative Coordinates**: floor() is used for consistency across coordinates.
+ * 2. **Boundary Precision**: Distance to the next block boundary is calculated.
+ * 3. **Chunk Caching**: Chunks are only re-queried when crossing into a new one.
  */
 Physics::RaycastResult Physics::raycast(const glm::vec3 &startPos, const glm::vec3 &direction, const float maxDistance)
 {
@@ -63,9 +60,8 @@ Physics::RaycastResult Physics::raycast(const glm::vec3 &startPos, const glm::ve
     );
 
     /**
-     * @brief Boundary distance calculation.
-     * Calculates the distance to the next integer boundary along a specific component.
-     * This handles the 0.0f special case to avoid infinitesimal loops at exact boundaries.
+     * Distance to the next block boundary is calculated here.
+     * The 0.0f case is handled to prevent infinite loops.
      */
     auto calcBoundaryDist = [](float pos, float dir_component) -> float {
         if (dir_component >= 0) {
@@ -82,7 +78,7 @@ Physics::RaycastResult Physics::raycast(const glm::vec3 &startPos, const glm::ve
     const float boundaryY = calcBoundaryDist(startPos.y, dir.y);
     const float boundaryZ = calcBoundaryDist(startPos.z, dir.z);
 
-    // Precompute inverse directions: used to scale boundary distances into ray-parameter units
+    // Inverse directions are pre-calculated to save time inside the loop.
     const float invDirX = (std::abs(dir.x) > 1e-6f) ? (1.0f / std::abs(dir.x)) : 1e6f;
     const float invDirY = (std::abs(dir.y) > 1e-6f) ? (1.0f / std::abs(dir.y)) : 1e6f;
     const float invDirZ = (std::abs(dir.z) > 1e-6f) ? (1.0f / std::abs(dir.z)) : 1e6f;
@@ -111,7 +107,7 @@ Physics::RaycastResult Physics::raycast(const glm::vec3 &startPos, const glm::ve
 
     for (int iteration = 0; iteration < maxIterations && currentDistance < maxDistance; ++iteration) {
         
-        // OPTIMIZATION: Check if we have entered a new chunk
+        // Checking if the ray moved into a new chunk since the last step.
         const int chunkX = worldToChunkCoord(static_cast<float>(mapPos.x), CHUNK_WIDTH);
         const int chunkY = worldToChunkCoord(static_cast<float>(mapPos.y), CHUNK_HEIGHT);
         const int chunkZ = worldToChunkCoord(static_cast<float>(mapPos.z), CHUNK_WIDTH);
@@ -156,9 +152,8 @@ Physics::RaycastResult Physics::raycast(const glm::vec3 &startPos, const glm::ve
         }
 
         /**
-         * @brief Core DDA Step.
-         * Select the axis with the shortest remaining distance to its next boundary.
-         * This advances mapPos by exactly one voxel.
+         * @brief DDA Step logic.
+         * The closest axis is selected, and the position moves one block in that direction.
          */
         if (tMax.x < tMax.y) {
             if (tMax.x < tMax.z) {

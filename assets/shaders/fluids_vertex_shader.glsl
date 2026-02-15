@@ -48,7 +48,7 @@ void main()
 	}
 	
 	gl_Position = projection * view * vec4(pos, 1.0);
-	FragPos = pos;  // World-space position for reflection projection
+	FragPos = pos;  // Keep track of where the point is in the world for reflections.
 	
 	float frame = mod(time / animationTime, 1.0) * aFrames;
     int currentLayer = aLayerIndex + int(floor(frame));

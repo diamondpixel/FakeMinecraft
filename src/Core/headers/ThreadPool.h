@@ -1,6 +1,6 @@
 /**
  * @file ThreadPool.h
- * @brief High-performance multithreaded task execution system.
+ * @brief A system to run tasks on multiple threads at once.
  */
 
 #pragma once
@@ -27,15 +27,9 @@
 /** @} */
 
 /**
- * @class ThreadPool
- * @brief A standard executor that manages a fixed set of worker threads and a shared task queue.
- * 
- * This class is designed for low latency and high throughput. It employs several 
- * optimizations:
- * 1. **False Sharing Prevention**: Critical atomic counters are aligned to separate cache lines.
- * 2. **Lock-Free Fast Paths**: Idle checks and pending counts use relaxed atomic operations.
- * 3. **Perfect Forwarding**: Tasks are forwarded into the queue to avoid redundant copies.
- * 4. **Batch Submission**: Multiple tasks can be added in a single lock acquisition to reduce contention.
+ * This class manages a group of threads that wait for tasks to be added to a queue.
+ * It includes some settings to make sure the threads don't interfere with each other
+ * and that tasks are processed in a fair way.
  */
 class ThreadPool {
 public:
@@ -296,10 +290,10 @@ private:
         }
     }
 
-    /** @name Thread-Safe Counters
-     * Counters are aligned to CACHE_LINE_SIZE to separate them into different 
-     * L1/L2 cache lines, preventing "False Sharing" performance degradation 
-     * on multi-socket or high-core-count systems.
+    /** @name Counters
+     * These variables help keep track of how many tasks are being worked on.
+     * They are spaced out in memory to prevent the threads from slowing each
+     * other down by trying to access the same memory location at once.
      * @{
      */
     alignas(CACHE_LINE_SIZE) std::atomic<size_t> activeTasks; ///< Number of tasks being executed right now.
@@ -321,13 +315,10 @@ private:
 
 /**
  * @class WorkStealingThreadPool
- * @brief An advanced thread pool where each worker has its own local queue.
+ * @brief A more advanced thread pool where each thread has its own list of tasks.
  * 
- * Provides significantly better load balancing for heterogeneous workloads (tasks 
- * with widely varying durations). When a thread finishes its local queue, it 
- * "steals" work from another worker's queue.
- * 
- * Reduces synchronization contention vs. the global queue model.
+ * This helps balance the workload because if one thread finishes early, it can 
+ * help out another thread by taking some of its tasks.
  */
 class WorkStealingThreadPool {
 public:

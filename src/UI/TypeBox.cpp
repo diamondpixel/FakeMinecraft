@@ -1,3 +1,7 @@
+/**
+ * @file TypeBox.cpp
+ * @brief Implementation of a text input box.
+ */
 #include "TypeBox.h"
 #include <algorithm>
 #include <iostream>
@@ -29,13 +33,19 @@ void TypeBox::draw() const {
     drawText(textX, y + 5, 16, text, br);
 }
 
+/**
+ * @brief Handles keyboard input for typing and backspacing.
+ * 
+ * It includes a small delay so that holding a key doesn't type 
+ * too many characters at once.
+ */
 void TypeBox::handleInput() {
     static std::unordered_map<int, float> keyPressTime;
     static std::unordered_map<int, bool> keyState;
     static bool enterPressed = false;
 
-    const float initialDelay = 500.0f;
-    const float spamInterval = 2.0f;
+    const float initialDelay = 500.0f; // Wait half a second before repeating
+    const float spamInterval = 2.0f;   // How fast to repeat after the delay
 
     float currentTime = graphics::getGlobalTime();
 
@@ -97,6 +107,9 @@ void TypeBox::processKey(int scancode) {
     }
 }
 
+/**
+ * @brief Calculates how wide the text is to make sure it fits in the box.
+ */
 float TypeBox::approximateTextWidth(const std::string &text, float fontSize) {
     const float averageCharWidth = fontSize * 0.6f;
     return averageCharWidth * text.length();

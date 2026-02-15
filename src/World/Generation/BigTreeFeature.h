@@ -6,7 +6,7 @@
 
 /**
  * BigTreeFeature - Generates large oak-like trees with branches.
- * Optimized for fast generation with minimal computational overhead.
+ * This class includes logic to make sure trees don't overlap too much.
  */
 class BigTreeFeature final : public Feature {
 public:
@@ -45,7 +45,7 @@ public:
                               int worldX, int worldZ,
                               uint64_t seed) noexcept override {
 
-        // Initialize fast RNG
+        // Use a simple random number generator to decide tree height
         FastRNG rng(hashSeed(seed, worldX, worldZ));
         const int height = rng.nextRange(8, 12);
 
@@ -143,6 +143,7 @@ private:
         }
     };
 
+    // A simple function to create a random number based on the location
     [[nodiscard]] static inline uint64_t hashSeed(uint64_t seed, int worldX, int worldZ) noexcept {
         uint64_t hash = seed;
         hash ^= static_cast<uint64_t>(worldX) * 73856093ULL;

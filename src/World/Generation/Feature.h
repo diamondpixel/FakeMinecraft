@@ -8,13 +8,11 @@
 class Chunk;
 
 /**
- * Abstract base class for world generation features (trees, ores, flowers, etc).
- * Features are placed during the "Feature Pass" of world generation.
- *
- * PERFORMANCE NOTES:
- * - All virtual methods are marked noexcept for zero-cost exception handling
- * - Derived classes should mark overrides as final where possible for devirtualization
- * - canPlace() and getSpawnChance() are hot path - keep implementations lightweight
+ * @class Feature
+ * @brief A base class for things like trees, ores, or flowers.
+ * 
+ * Features are placed after the main terrain is generated. The logic is 
+ * kept simple to ensure the world generates smoothly.
  */
 class Feature {
 public:
@@ -37,12 +35,8 @@ public:
      * Attempts to place this feature at the given world position.
      * The feature may choose not to place if conditions are not met.
      *
-     * PERFORMANCE: This is a hot path method called frequently during generation.
-     * Implementations should:
-     * - Minimize allocations
-     * - Use efficient index calculations
-     * - Early-exit on failed conditions
-     * - Mark override as 'noexcept' and consider 'final' if not further derived
+     * This function is called often, so it should be as simple as possible 
+     * while still placing the feature correctly.
      *
      * @param chunkData Raw block data array for the chunk (non-null, size >= CHUNK_WIDTH * CHUNK_WIDTH * CHUNK_HEIGHT)
      * @param localX Local X coordinate within chunk [0, CHUNK_WIDTH-1]
@@ -101,15 +95,7 @@ public:
 };
 
 /**
- * Helper macro for defining final feature classes with optimal devirtualization.
- * Use when a feature class will not be further derived from.
- *
- * Example usage:
- * class MyFeature final : public Feature {
- *     bool place(...) noexcept override final { ... }
- *     bool canPlace(...) const noexcept override final { ... }
- *     float getSpawnChance() const noexcept override final { ... }
- * };
+ * A helper to show that these features cannot be further changed.
  */
 #define FEATURE_FINAL_OVERRIDES \
     [[nodiscard]] bool place(uint8_t* chunkData, \

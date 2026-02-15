@@ -1,3 +1,7 @@
+/**
+ * @file WorldGen.h
+ * @brief Header for the terrain generation logic.
+ */
 #pragma once
 
 #include <cstdint>
@@ -5,6 +9,10 @@
 
 struct ChunkPos;
 
+/**
+ * @class WorldGen
+ * @brief Class that handles creating the terrain layout based on a seed.
+ */
 class WorldGen {
 public:
     // Main generation function

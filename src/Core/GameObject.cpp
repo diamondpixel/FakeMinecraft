@@ -19,8 +19,8 @@
 // ============================================================================
 namespace {
     /**
-     * @brief Compile-time constant string hashing for fast block name comparisons.
-     * Uses the DJB2 algorithm.
+     * @brief String hashing implementation using the DJB2 algorithm at compile time.
+     * This helps the game run faster when comparing block names.
      */
     constexpr uint32_t hashCString(const char *str) {
         uint32_t hash = 5381;
@@ -30,7 +30,7 @@ namespace {
         return hash;
     }
 
-    // Pre-computed block name hashes to avoid runtime handle lookups
+    // Block names are pre-hashed to avoid searching for them while the game is running.
     constexpr uint32_t HASH_WATER = hashCString("WATER");
     constexpr uint32_t HASH_LAVA = hashCString("LAVA");
     constexpr uint32_t HASH_TALL_GRASS_BOTTOM = hashCString("TALL_GRASS_BOTTOM");
@@ -47,7 +47,7 @@ namespace {
     }
 
     /**
-     * @brief High-performance branchless floor function for float-to-block-int conversion.
+     * @brief A simple floor function for converting floats to block coordinates.
      */
     [[gnu::always_inline]]
     int fastBlockFloor(const float coord) {
@@ -140,8 +140,7 @@ void GameObject::init() {
     cachedWindowCenter.x = windowX * 0.5f;
     cachedWindowCenter.y = windowY * 0.5f;
 
-    // Setup callbacks with optimized lambdas
-    // Setup callbacks with optimized lambdas
+    // Callbacks are set up here using lambdas.
     graphics::setPreDrawFunction([ this] {
         sky.update(1.0f / std::max(graphics::getFPS(), 1.0f));
         //sky.update(0.1);
@@ -165,8 +164,8 @@ void GameObject::init() {
         // Position light source based on sky/sun
         glm::vec3 sunTo = -sky.getSunDirection();
         
-        // QUANTIZE SUN DIRECTION: Snap to discrete angles to prevent jitter during sun movement
-        // Without this, continuous sun rotation causes light-space basis to rotate → texel grid rotates → jitter
+        // The sun's angle is snapped to certain steps to prevent jittering during movement.
+        // This ensures the light-space basis doesn't rotate continuously, which would cause jumpy shadows.
         const float angleQuantization = glm::radians(0.5f); // 0.5 degree steps
         
         // Convert to spherical coordinates
@@ -197,8 +196,8 @@ void GameObject::init() {
             lightUp = glm::vec3(0.0f, 0.0f, 1.0f);
         }
         
-        // TEXEL SNAPPING: Snap shadow frustum center to texel grid
-        // Calculate world-space size of one shadow texel
+        // The shadow center is snapped to the texel grid to maintain stable shadows.
+        // This calculates the world-space size of one shadow texel.
         const float worldUnitsPerTexel = (2.0f * shadowDist) / static_cast<float>(Planet::planet->SHADOW_WIDTH);
         
         // Build orthonormal basis for light space (matching lookAt)
@@ -237,7 +236,7 @@ void GameObject::init() {
         // Disable culling to ensure all geometry casts shadows (especially thin pillars)
         glDisable(GL_CULL_FACE);
         
-        // Polygon offset to prevent shadow acne (self-shadowing stripes)
+        // A polygon offset is used to prevent shadow acne (those weird stripes).
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(2.0f, 2.0f);
 
@@ -265,7 +264,7 @@ void GameObject::init() {
         glClearColor(sky.getSkyColor().r, sky.getSkyColor().g, sky.getSkyColor().b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Batch texture binding
+        // Texture binding is performed here.
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D_ARRAY, texArrayID);
 
@@ -497,7 +496,7 @@ void GameObject::initializeMSAA() {
 // UPDATE METHODS
 // ============================================================================
 void GameObject::updateWindowTitle() {
-    // OPTIMIZATION: Only update if values changed significantly
+    // The title is only updated if the values actually changed to save processing time.
     static int lastFPS = -1;
     static int lastChunkCount = -1;
 
@@ -505,7 +504,7 @@ void GameObject::updateWindowTitle() {
     const int currentChunks = Planet::planet->numChunks;
 
     if (currentFPS != lastFPS || currentChunks != lastChunkCount) [[unlikely]] {
-        // Use static buffer to avoid allocations
+        // A static buffer is used to avoid constant string creation.
         static char titleBuffer[128];
         snprintf(titleBuffer, sizeof(titleBuffer),
                  "Fake Minecraft / FPS: %d Total Chunks: %d",
@@ -702,7 +701,7 @@ void GameObject::renderDebugInfo() const {
         return b;
     }();
 
-    // OPTIMIZATION: Use static buffer for text
+    // A static buffer is used for text rendering.
     static char coordsBuffer[64];
     snprintf(coordsBuffer, sizeof(coordsBuffer), "COORDS: %d, %d, %d",
              static_cast<int>(camera.Position.x),
@@ -1018,7 +1017,7 @@ void GameObject::handleBlockPlace(const Physics::RaycastResult &result) const {
 // UTILITY
 // ============================================================================
 void GameObject::playSound(const uint16_t block_id) {
-    // OPTIMIZATION: Lookup table for common blocks
+    // A lookup table is used for identifying common blocks.
     static constexpr struct {
         uint16_t id;
         const char *sound;

@@ -6,11 +6,10 @@
 #include <GL/glew.h>
 
 /**
- * @brief Manages the Dynamic Texture Atlas using OpenGL 2D Texture Arrays.
+ * @brief Manages the game's textures using OpenGL Texture Arrays.
  * 
- * TextureManager is responsible for loading textures from the disk, processing them 
- * (tinting, upscaling, bleeding correction), and uploading them to an OpenGL 
- * GL_TEXTURE_2D_ARRAY. It follows the Singleton pattern.
+ * TextureManager loads image files from the disk, processes them (like adding
+ * tints or resizing them), and sends them to the GPU. 
  */
 class TextureManager {
 public:
@@ -24,12 +23,12 @@ public:
      * @brief Scans a directory for textures, processes them, and builds the 2D Texture Array.
      * 
      * This method:
-     * - Discovers valid texture files (.png, .jpg, .tga).
-     * - Tints specific textures (e.g., foliage, water).
-     * - Fixes texture bleeding at alpha boundaries.
-     * - Upscales all textures to the maximum found dimension.
-     * - Handles animated textures by treating vertical strips as frames.
-     * - Uploads the final result to OpenGL.
+     * - Finds valid texture files (.png, .jpg, .tga).
+     * - Adds tints to certain blocks (like leaves or water).
+     * - Fixes issues where the edges of textures look weird.
+     * - Resizes all textures so they are the same size.
+     * - Handles animations for moving textures like water.
+     * - Sends everything to the GPU.
      * 
      * @param directoryPath Path to the directory containing texture assets.
      */

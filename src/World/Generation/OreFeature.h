@@ -4,8 +4,7 @@
 #include "../headers/WorldConstants.h"
 
 /**
- * Ore feature - places clusters of ore blocks underground.
- * Optimized for fast vein generation with minimal overhead.
+ * Ore feature - places small groups of ores underground.
  */
 class OreFeature final : public Feature {
 public:
@@ -43,7 +42,7 @@ public:
                               int worldX, int worldZ,
                               uint64_t seed) noexcept override {
 
-        // Initialize fast RNG with hashed seed
+        // Start the random generator with a seed based on location.
         FastRNG rng(hashSeed(seed, worldX, worldZ, localY));
 
         int placed = 0;
@@ -85,8 +84,7 @@ private:
         return (x * CHUNK_WIDTH + z) * CHUNK_HEIGHT + y;
     }
 
-    // Lightweight random number generator for ore placement
-    // Uses xorshift algorithm for speed and good distribution
+    // A simple math-based random generator to decide where ores go.
     struct FastRNG {
         uint64_t state;
 

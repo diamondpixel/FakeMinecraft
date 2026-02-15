@@ -6,8 +6,7 @@
 #include <algorithm>
 
 /**
- * LakeFeature - Carves out a depression and fills it with a liquid.
- * Optimized for fast lake generation with minimal computational overhead.
+ * LakeFeature - Creates small pools of water or lava.
  */
 class LakeFeature final : public Feature {
 public:
@@ -16,7 +15,7 @@ public:
     const int radius;
     const float spawnChance;
 
-    // Pre-computed constants for optimization
+    // Help speed up calculations by pre-calculating some values.
     const int radiusSquared;
     const int halfRadius;
 
@@ -37,7 +36,7 @@ public:
             return false;
         }
 
-        // Foundation Check: Ensure we have a solid 3x3 base
+        // Make sure there is solid ground below before placing water.
         const int baseY = localY - 1;
 
         for (int dx = -1; dx <= 1; ++dx) {

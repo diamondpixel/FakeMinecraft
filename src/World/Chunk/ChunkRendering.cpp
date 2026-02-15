@@ -61,7 +61,7 @@ void Chunk::uploadMesh() {
     size_t totalBillboardVerts = 0, totalBillboardInds = 0;
     size_t totalWaterVerts = 0, totalWaterInds = 0;
     
-    // Track min/max Y for tight bounding box
+    // Track the highest and lowest points to help hide the chunk if it's not on screen.
     int16_t minY = INT16_MAX, maxY = INT16_MIN;
     
     for (int i = 0; i < NUM_SUBCHUNKS; ++i) {

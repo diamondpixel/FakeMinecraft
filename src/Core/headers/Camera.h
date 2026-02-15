@@ -46,14 +46,14 @@ constexpr float YAW_WRAP = 360.0f;  ///< Wrap value for modular arithmetic on ya
  * vectors required for lookAt matrix generation. It supports both free-floating movement 
  * (Freecam) and standard first-person controls.
  * 
- * The member layout is strictly ordered to ensure "hot" data (vectors used every frame) 
- * fits within a single CPU cache line.
+ * Frequently used variables are kept together to help the CPU load them
+ * more efficiently.
  */
 class Camera
 {
 public:
-	/** @name Hot Data
-	 * Frequently accessed member variables grouped for cache efficiency.
+	/** @name Core Vectors
+	 * Variables used every frame for movement and looking.
 	 * @{
 	 */
 	glm::vec3 Position;      ///< Current world-space position.
@@ -62,8 +62,8 @@ public:
 	glm::vec3 Up;            ///< Normalized vector pointing to the camera's relative up.
 	/** @} */
 
-	/** @name Cold Data
-	 * Less frequently accessed variables.
+	/** @name Extra Data
+	 * Settings and less frequent variables.
 	 * @{
 	 */
 	glm::vec3 WorldUp;       ///< Global up definition (typically Y+).

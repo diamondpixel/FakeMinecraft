@@ -1,6 +1,6 @@
 /**
  * @file Planet.cpp
- * @brief Implementation of the Planet class, managing world lifecycle and rendering.
+ * @brief Implementation for the Planet class. This handles everything from world gen to rendering.
  */
 
 #include "Planet.h"
@@ -11,7 +11,7 @@
 #include "WorldGen.h"
 #include "glm/gtc/matrix_transform.hpp"
 
-// Branch prediction hints for performance-critical code paths.
+// These macros help the CPU predict which way the code usually goes.
 #if defined(__GNUC__) || defined(__clang__)
     #define LIKELY(x)   __builtin_expect(!!(x), 1)
     #define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -22,19 +22,19 @@
 
 Planet *Planet::planet = nullptr;
 
-// Pre-computed neighbor offsets (calculated once, reused everywhere)
+// Neighbor offsets are pre-calculated to avoid repetitive work.
 static constexpr int NEIGHBOR_OFFSETS[6][3] = {
     {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
 };
 
-// Tuning constants for pre-allocating memory to minimize runtime reallocations.
+// Constants for reserving memory to avoid frequent reallocations.
 static constexpr size_t EXPECTED_CHUNK_COUNT = 4000;
 static constexpr size_t EXPECTED_VISIBLE_CHUNKS = 800;
 
 Planet::Planet(Shader *solidShader, Shader *waterShader, Shader *billboardShader, Shader* bboxShader)
     : solidShader(solidShader), waterShader(waterShader), billboardShader(billboardShader), bboxShader(bboxShader) {
 
-    // Reserve capacity upfront to avoid reallocations
+    // Reserve some space upfront so it doesn't slow down the game later.
     chunks.reserve(EXPECTED_CHUNK_COUNT);
     chunkList.reserve(EXPECTED_CHUNK_COUNT);
     chunkData.reserve(EXPECTED_CHUNK_COUNT);
@@ -109,11 +109,11 @@ Planet::~Planet() {
 //==============================================================================
 
 void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
-    // Use atomic load with relaxed ordering for better performance.
+    // Relaxed atomics are used here because they are faster and suitable for simple seed checks.
     const long currentSeed = SEED;
     const long cachedSeed = last_seed.load(std::memory_order_relaxed);
 
-    // Early seed change check (no lock needed for read-only check).
+    // Check if the seed changed early on.
     if (UNLIKELY(currentSeed != cachedSeed)) {
         std::unique_lock lock(chunkMutex);
 
@@ -194,7 +194,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
     const float camPosZ = cameraPos.z;
 
     // Loop through all active chunks. NO LOCK HELD during iteration.
-    // Use size_t for better optimization on 64-bit systems.
+    // size_t is used here for better compatibility with 64-bit systems.
     const size_t renderChunksSize = renderChunks.size();
     for (size_t i = 0; i < renderChunksSize; ++i) {
         Chunk * const chunk = renderChunks[i];
@@ -208,8 +208,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
 
         const bool needsUpload = chunk->generated && !chunk->ready;
         if (UNLIKELY(needsUpload)) {
-            // Aggressive upload: Ensure mesh is uploaded even if not visible.
-            // Limit to 4 uploads per frame to prevent frame-time spikes.
+            // Uploads are limited to 4 per frame to prevent stuttering.
             if (chunksUploadedThisFrame < 4) {
                 chunk->uploadMesh();
                 ++chunksUploadedThisFrame;
@@ -229,7 +228,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
             chunk->cachedDistSq = distSq;
             frustumVisibleChunks.push_back(chunk);
 
-            // Chunks in the 3x3x3 Safe Zone around camera are ALWAYS rendered to prevent flickering.
+            // Chunks in this 3x3x3 zone around the camera are always drawn to prevent blocks from flickering.
             const int distCX = std::abs(pos.x - newCamChunkX);
             const int distCY = std::abs(pos.y - newCamChunkY);
             const int distCZ = std::abs(pos.z - newCamChunkZ);
@@ -250,7 +249,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
         }
     }
 
-    // Sort render lists for optimal depth testing and blending.
+    // We need to sort these lists so that depth testing and blending works right.
     const bool cameraMoved = (newCamChunkX != prevSortCamX) || (newCamChunkZ != prevSortCamZ);
     const bool shouldSort = cameraMoved || !toDeleteList.empty();
 
@@ -280,7 +279,8 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
             if (it != chunks.end()) {
                 Chunk* const chunk = it->second;
 
-                // O(1) remove from chunkList using swap-and-pop.
+                // This is a neat trick to remove things from the list in constant time:
+                // swap the one we want with the last one, then pop the back.
                 const size_t index = chunk->listIndex;
                 if (LIKELY(index < chunkList.size())) {
                     Chunk* const lastChunk = chunkList.back();
@@ -319,7 +319,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
                     glGetQueryObjectuiv(chunk->queryID, GL_QUERY_RESULT, &result);
                     const bool rawVisible = (result > 0);
 
-                    // Hysteresis (Discrete Voting): Prevent rapid flickering of visibility state.
+                    // A voting system (hysteresis) is used to prevent flickering in/out.
                     if (LIKELY(rawVisible)) {
                         chunk->occlusionVisible = true;
                         chunk->occlusionCounter = 0;
@@ -423,7 +423,7 @@ void Planet::update(const glm::vec3 &cameraPos, bool updateOcclusion) {
 void Planet::renderShadows(Shader* shader) {
     shader->use();
     
-    // Simple Shadow Culling: Render chunks within shadow distance around camera
+    // Shadow culling is implemented here to only render shadows for chunks near the player.
     const int camX = camChunkX.load(std::memory_order_relaxed);
     const int camY = camChunkY.load(std::memory_order_relaxed);
     const int camZ = camChunkZ.load(std::memory_order_relaxed);
@@ -472,7 +472,7 @@ void Planet::renderReflection(const glm::vec3 &cameraPos, const glm::vec3 &camer
     reflectFront.y = -reflectFront.y;
     
     glm::mat4 view = glm::lookAt(reflectPos, reflectPos + reflectFront, glm::vec3(0, 1, 0));
-    // Match Main Camera's Reverse-Z Projection (Near=10000, Far=0.1)
+    // The same Reverse-Z setup as the main camera is used so everything lines up.
     glm::mat4 projection = glm::perspective(glm::radians(90.0f), aspectRatio, 10000.0f, 0.1f);
     
     // Store for water shader to use during main pass
@@ -482,8 +482,7 @@ void Planet::renderReflection(const glm::vec3 &cameraPos, const glm::vec3 &camer
     Frustum reflectionFrustum;
     reflectionFrustum.update(projection * view);
 
-    // Clip Plane: Keep everything ABOVE water level + small safety margin
-    // Tighter margin to prevent near-water terrain from reflecting
+    // A clip plane is set so only reflections above the water level are rendered.
     glm::vec4 clipPlane = glm::vec4(0.0f, 1.0f, 0.0f, -(waterLevel + 0.5f));
     
     // Update Shaders
@@ -555,7 +554,7 @@ inline bool Planet::isOutOfRenderDistance(const ChunkPos &pos) const noexcept {
     const int camX = camChunkX.load(std::memory_order_relaxed);
     const int camZ = camChunkZ.load(std::memory_order_relaxed);
 
-    // OPTIMIZATION: Use bitwise operations for abs() when possible
+    // Bitwise operations are used for abs() where possible to improve efficiency.
     const int diffX = pos.x - camX;
     const int diffZ = pos.z - camZ;
     const int absX = (diffX < 0) ? -diffX : diffX;
@@ -587,19 +586,19 @@ void Planet::chunkThreadUpdate() {
     static int cleanupCounter = 0;
 
     while (!shouldEnd.load(std::memory_order_acquire)) {
-        // Abort if seed changed
+        // If the seed changes, we need to stop what we're doing.
         if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
-        // Cleanup unused chunk data (throttled to avoid lock contention)
+        // Throttling the cleanup of old chunk data to avoid hitting the lock too much.
         if (++cleanupCounter > 5000) {
             cleanupUnusedChunkData();
             cleanupCounter = 0;
         }
 
-        // Use atomic loads for lock-free reads to minimize synchronization overhead.
+        // Atomic loads are used here to minimize locking when reading camera positions.
         const int currentCamX = camChunkX.load(std::memory_order_relaxed);
         const int currentCamY = camChunkY.load(std::memory_order_relaxed);
         const int currentCamZ = camChunkZ.load(std::memory_order_relaxed);
@@ -787,12 +786,12 @@ void Planet::processChunkDataQueue() {
 
     if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) return;
 
-    // Submit all chunks to the thread pool for parallel terrain generation.
+    // Sending all these chunks to be generated in parallel so it's faster.
     for (const ChunkPos &pos: toGenerate) {
         chunkGenPool.submit([this, pos]() {
             if (UNLIKELY(SEED != last_seed.load(std::memory_order_relaxed))) return;
 
-            // Use aligned allocation for better cache performance; raw pointer wrapped in shared_ptr.
+            // Allocating memory for the chunk data and storing it in a shared_ptr.
             auto *d = new uint8_t[CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_WIDTH];
             WorldGen::generateChunkData(pos, d, SEED);
             const auto data = std::make_shared<ChunkData>(d);

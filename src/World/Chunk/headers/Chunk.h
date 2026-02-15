@@ -23,7 +23,7 @@ struct LiquidFace {
     char waterTopValue;
 };
 
-// Sub-Chunk for fine-grained culling (16 blocks high)
+// Divides the chunk into smaller sections to help with performance.
 struct SubChunk {
     unsigned int worldVAO{}, waterVAO{}, billboardVAO{};
     unsigned int worldVBO{}, worldEBO{}, liquidVBO{}, liquidEBO{}, billboardVBO{}, billboardEBO{};
@@ -42,17 +42,13 @@ public:
     explicit Chunk(ChunkPos chunkPos);
     ~Chunk();
 
-    // ========================================================================
-    // MESH GENERATION (ChunkMeshGeneration.cpp)
-    // ========================================================================
+    // Logic for creating the visual mesh for the blocks.
     void generateChunkMesh();
 
     // Light map computation (BFS flood-fill from emissive blocks)
     void computeLightMap();
 
-    // Horizontal faces (TOP/BOTTOM) with greedy meshing
-    void generateHorizontalFaces(unsigned int* currentVertex);
-
+    // Functions for combining multiple block faces to save processing time.
     void greedyMergeTopFaces(int y, int subChunkIndex, uint16_t topMask[][CHUNK_WIDTH],
                             bool processed[][CHUNK_WIDTH], unsigned int* currentVertex);
     void greedyMergeBottomFaces(int y, int subChunkIndex, uint16_t bottomMask[][CHUNK_WIDTH],
@@ -98,7 +94,7 @@ public:
     void renderBillboard(int subChunkIndex) const;
     void renderWater(int subChunkIndex) const;
 
-    // Render all sub-chunks in one call (reduces draw call overhead)
+    // Helper functions to draw everything in the chunk at once.
     void renderAllSolid();
     void renderAllBillboard() const;
     void renderAllWater() const;
@@ -154,14 +150,14 @@ public:
     // Sub-chunk data (kept for potential future per-sub-chunk culling)
     SubChunk subChunks[NUM_SUBCHUNKS];
 
-    // Hardware Occlusion Query
+    // Variables for checking if the chunk is hidden behind something else.
     unsigned int queryID = 0;
-    bool queryIssued = false; // True after first glBeginQuery/glEndQuery cycle
-    bool occlusionVisible = true; // Result of previous frame's query (default visible)
-
-    // HOQ Smoothing
-    int occlusionCounter = 0;      // Discrete Voting: frames of consecutive occlusion
-    float occlusionScore = 1.0f;   // EMA: visibility score (0.0 = hidden, 1.0 = visible)
+    bool queryIssued = false; 
+    bool occlusionVisible = true; 
+    
+    // Counters to help smoothly hide and show the chunk.
+    int occlusionCounter = 0;      
+    float occlusionScore = 1.0f;   
 
 private:
     glm::vec3 worldPos;

@@ -1,6 +1,6 @@
 /**
  * @file Blocks.h
- * @brief Utility namespace for global block identification and registry initialization.
+ * @brief Utilities for finding blocks and adding them to the game.
  */
 
 #pragma once
@@ -11,7 +11,7 @@
 
 /**
  * @namespace Blocks
- * @brief Provides easy access to block IDs and handles the bootstrap registration.
+ * @brief Provides a simple way to get block IDs and register new blocks.
  */
 namespace Blocks {
     /** @name Global Block IDs
@@ -45,11 +45,11 @@ namespace Blocks {
     /** @} */
 
     /**
-     * @brief Bootstraps the block system.
+     * @brief Adds all the blocks to the game system.
      * 
-     * 1. Registers every block type in the BlockRegistry.
-     * 2. Captures the numeric IDs into global variables.
-     * 3. Resolves texture names into Layer IDs from the TextureManager.
+     * 1. Teaches the registry about every block type.
+     * 2. Saves the block numbers for later use.
+     * 3. Finds the right textures for each block.
      */
     inline void init() {
         BlockRegistry& registry = BlockRegistry::getInstance();

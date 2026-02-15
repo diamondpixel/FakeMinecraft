@@ -6,7 +6,7 @@
 #include "ChunkData.h"
 #include "Blocks.h"
 
-// Helper struct to cache neighbor block data
+// Group neighbors to avoid repeating the same code.
 struct NeighborData {
     int block;
     int topBlock;
@@ -33,7 +33,7 @@ inline bool shouldRenderFace(const NeighborData &neighbor, bool const isCurrentL
     return shouldRender;
 }
 
-// Extract neighbor fetching into separate functions for clarity
+// Functions to find blocks in neighboring chunks.
 inline void fetchNorthNeighbor(NeighborData &neighbor, const int x, const int y, const int z,
                                const std::shared_ptr<ChunkData> &chunkData,
                                const std::shared_ptr<ChunkData> &northData,
@@ -57,8 +57,7 @@ inline void fetchNorthNeighbor(NeighborData &neighbor, const int x, const int y,
             for (int i = 0; i < 64; i++) sum += northData->getBlock(x, i, CHUNK_WIDTH - 1);
 
             if (sum == 0 && !logN) {
-                std::cout << "[DEBUG] CRITICAL: NorthNeighbor appears to be EMPTY (AIR) below water level! Ptr=" <<
-                        northData.get() << std::endl;
+                std::cout << "[DEBUG] Note: The chunk to the North seems to be empty for some reason." << std::endl;
                 logN = true;
             }
         }

@@ -11,7 +11,7 @@ namespace fs = std::filesystem;
 
 /**
  * @file TextureManager.cpp
- * @brief Implementation of the TextureManager class for managing voxel textures.
+ * @brief This class manages loading all the textures for our voxel blocks.
  */
 
 TextureManager& TextureManager::getInstance() {
@@ -51,14 +51,10 @@ TextureManager::TextureData TextureManager::loadPixels(const std::string& path, 
 }
 
 /**
- * @brief Fixes texture bleeding by propagating colors from opaque pixels to adjacent transparent pixels.
+ * @brief This function fixes a problem where dark borders appear around textures (texture bleeding).
  * 
- * This prevents dark or "garbage" borders from appearing at the edges of transparent textures 
- * due to linear filtering (mipmap generation) in OpenGL.
- * 
- * @param pixels The pixel data to modify.
- * @param width The width of the texture.
- * @param height The height of the texture.
+ * Linear filtering can cause weird borders, so edge colors are spread
+ * to adjacent transparent pixels to hide it.
  */
 void fixTextureBleeding(std::vector<unsigned char>& pixels, const int width, const int height) {
     if (width <= 0 || height <= 0) [[unlikely]] return;
@@ -78,7 +74,7 @@ void fixTextureBleeding(std::vector<unsigned char>& pixels, const int width, con
 
     if (bfsQueue.empty()) [[unlikely]] return;
 
-    // 4-connected neighbors optimized for cache access
+    // Checking the neighbors in 4 directions.
     const int offsets[] = {-1, 1, -width, width};
 
     while (!bfsQueue.empty()) {
@@ -122,7 +118,7 @@ void fixTextureBleeding(std::vector<unsigned char>& pixels, const int width, con
     }
 }
 
-// Optimized upscaling with better memory access patterns
+// This function resizes images if they are not the correct size for the array.
 std::vector<unsigned char> TextureManager::upscaleImage(const std::vector<unsigned char>& src,
                                                          int srcW, int srcH, int dstW, int dstH) {
     if (srcW == dstW && srcH == dstH) [[unlikely]] return src;
@@ -155,7 +151,7 @@ std::vector<unsigned char> TextureManager::upscaleImage(const std::vector<unsign
         for (int x = 0; x < dstW; ++x) {
             const unsigned char* srcPixel = srcRow + srcXLookup[x] * 4;
             unsigned char* dstPixel = dstRow + x * 4;
-            // Use 32-bit copy for 4 bytes (better than memcpy for small fixed sizes)
+            // Copying 4 bytes of pixel data at once.
             *reinterpret_cast<uint32_t*>(dstPixel) = *reinterpret_cast<const uint32_t*>(srcPixel);
         }
     }
@@ -164,8 +160,7 @@ std::vector<unsigned char> TextureManager::upscaleImage(const std::vector<unsign
 
 namespace {
     /**
-     * @brief Parameters for color tinting.
-     * Multipliers are stored as (Fixed-Point 8.8) to allow for fast integer shifts.
+     * Fixed-point math is used here to allow for integer bit shifts, which improves performance.
      */
     struct TintParams {
         uint32_t rMul, gMul, bMul;
@@ -177,7 +172,7 @@ namespace {
      * @param pixels The pixel buffer.
      * @param size Size of the buffer in bytes.
      * @param tint The tint parameters.
-     * @param modifyAlpha Whether to enforce a minimum alpha threshold (useful for water).
+     * @param modifyAlpha Making sure the water isn't too transparent.
      */
     [[gnu::always_inline]]
     void applyTintImpl(unsigned char* pixels, const size_t size, const TintParams& tint, const bool modifyAlpha = false) {
@@ -217,8 +212,7 @@ namespace {
     };
 
     /**
-     * @brief Compile-time DJB2 hash for string views.
-     * Used for fast switch-like logic when identifying texture names.
+     * @brief A hash function is used to help find textures quickly by their names.
      */
     constexpr uint32_t hashString(std::string_view sv) {
         uint32_t hash = 5381;
@@ -283,7 +277,7 @@ void TextureManager::loadTextures(const std::string& directoryPath) {
 
     rawTextures.reserve(64);
 
-    // 1. Scan directory and load raw pixels
+    // 1. Look through the folder and load all the images.
     for (const auto& entry : fs::directory_iterator(directoryPath)) {
         if (!entry.is_regular_file()) continue;
 
@@ -309,7 +303,7 @@ void TextureManager::loadTextures(const std::string& directoryPath) {
     const int arrayWidth = std::max(maxWidth, maxHeight);
     const int arrayHeight = arrayWidth;
 
-    // 2. Calculate total layers (handling animations and padding)
+    // 2. Figure out how many layers we need (including animations).
     size_t layerCount = 0;
     for (const auto& tex : rawTextures) {
         int frames = (tex.height > tex.width && tex.height % tex.width == 0)
@@ -328,7 +322,7 @@ void TextureManager::loadTextures(const std::string& directoryPath) {
     std::vector<unsigned char> textureArrayBuffer(layerSize * layerCount);
     unsigned char* bufferPtr = textureArrayBuffer.data();
 
-    // Sort for deterministic ordering (guarantees layer indices remain stable if possible)
+    // Sorting the textures so the order is always the same.
     std::sort(rawTextures.begin(), rawTextures.end(),
               [](const TextureData& a, const TextureData& b) { return a.name < b.name; });
 
@@ -399,7 +393,7 @@ void TextureManager::loadTextures(const std::string& directoryPath) {
     glGenTextures(1, &textureArrayID);
     glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
 
-    // Use Nearest filtering for voxel look, but mipmaps for distance
+    // Nearest filtering is used for a blocky aesthetic, while mipmaps are used for distant clarity.
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);

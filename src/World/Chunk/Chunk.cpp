@@ -11,11 +11,11 @@ Chunk::Chunk(const ChunkPos chunkPos)
                          static_cast<float>(chunkPos.y) * CHUNK_HEIGHT,
                          static_cast<float>(chunkPos.z) * CHUNK_WIDTH);
 
-    // Initialize chunk-level culling data (for pre-cull)
+    // Initialize data to help decide if the chunk should be drawn.
     cullingCenter = worldPos + glm::vec3(CHUNK_WIDTH * 0.5f, CHUNK_HEIGHT * 0.5f, CHUNK_WIDTH * 0.5f);
     cullingExtents = glm::vec3(CHUNK_WIDTH * 0.5f, CHUNK_HEIGHT * 0.5f, CHUNK_WIDTH * 0.5f);
 
-    // Initialize sub-chunk culling data
+    // Set up area checks for smaller parts of the chunk.
     for (int i = 0; i < NUM_SUBCHUNKS; ++i) {
         const float subChunkY = worldPos.y + i * SUBCHUNK_HEIGHT;
         subChunks[i].cullingCenter = glm::vec3(
@@ -47,7 +47,6 @@ Chunk::~Chunk() {
     }
     if (mergedWaterVAO) {
         glDeleteBuffers(1, &mergedWaterVBO);
-        glDeleteBuffers(1, &mergedWaterEBO);
         glDeleteBuffers(1, &mergedWaterEBO);
         glDeleteVertexArrays(1, &mergedWaterVAO);
     }

@@ -5,8 +5,9 @@
 #include <queue>
 #include <cstring>
 
-// BFS light propagation from emissive blocks (lava)
-// BFS light propagation from emissive blocks (lava) and Sky Light Raycast
+// Spreads light from glowing blocks and from the sky.
+// This uses a Flood Fill / BFS approach common in voxel games.
+// Reference: https://gist.github.com/JuanDiegoMontoya/383bf2cc2ad3d1b8717a42b1f0bc6a7b
 void Chunk::computeLightMap() {
     // Clear light map
     memset(lightMap, 0, sizeof(lightMap));
@@ -151,10 +152,8 @@ void Chunk::computeLightMap() {
         }
     }
 
-    // --- PASS 2: SKY LIGHT (Upper 4 bits) ---
-    // Simple vertical raycast for now (Sunlight Occlusion)
-    // For full filtered propagation, we'd need another BFS.
-    // Here: X, Z columns. Fill 15 down to first occluder.
+    // --- PASS 2: SKY LIGHT ---
+    // Check which blocks can see the sky (Sunlight Shadowing).
     
     for (int x = 0; x < CW; x++) {
         for (int z = 0; z < CW; z++) {

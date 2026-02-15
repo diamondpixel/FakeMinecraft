@@ -5,9 +5,8 @@
 #include "../headers/WorldConstants.h"
 
 /**
- * Tree feature - places a tree at the given position.
- * Configurable trunk and leaf blocks, height, and canopy size.
- * Optimized for cache efficiency and reduced computational overhead.
+ * Tree feature - handles how trees are placed in the world.
+ * You can change what blocks are used for wood and leaves.
  */
 class TreeFeature final : public Feature {
 public:
@@ -48,7 +47,7 @@ public:
                               int worldX, int worldZ,
                               uint64_t seed) noexcept override {
 
-        // Fast random height generation without expensive RNG setup
+        // Pick a random height for the tree based on the coordinates.
         const int treeHeight = fastRandomRange(seed, worldX, worldZ, minHeight, maxHeight);
 
         // Bounds validation - check all constraints upfront
@@ -56,7 +55,7 @@ public:
         if (localX < canopyRadius || localX >= CHUNK_WIDTH - canopyRadius) return false;
         if (localZ < canopyRadius || localZ >= CHUNK_WIDTH - canopyRadius) return false;
 
-        // Place trunk - optimize by calculating base index once
+        // Set the wood blocks for the trunk.
         const int trunkBaseIdx = calculateIndex(localX, localZ, localY);
         for (int y = 0; y < treeHeight; ++y) {
             chunkData[trunkBaseIdx + y] = logBlock;

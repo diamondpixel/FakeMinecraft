@@ -57,13 +57,13 @@ void main()
 	if (texResult.a < 0.1)
 		discard;
 	
-	// === REFLECTION ===
+	// Reflection stuff
 	
-	// Project fragment into reflection camera space
+	// Figure out where this fragment is in the reflection camera's view.
     vec3 reflectionNDC = FragPosReflectionSpace.xyz / FragPosReflectionSpace.w;
     vec2 reflectionUV = reflectionNDC.xy * 0.5 + 0.5;
     
-    // Wave-based distortion for natural look
+    // Wave distortion is added to make the water look more realistic.
     float wave1 = sin(FragPos.x * 0.8 + time * 0.7) * 0.003;
     float wave2 = sin(FragPos.z * 1.2 + time * 0.5) * 0.003;
     reflectionUV += vec2(wave1, wave2);
@@ -72,21 +72,22 @@ void main()
     
 	vec3 reflectionColor = texture(reflectionMap, reflectionUV).rgb;
 	
-	// Tint reflection with water color
+	// Adding a bit of blue tint to the reflection so it looks like water.
 	vec3 waterTint = vec3(0.3, 0.5, 0.7);
 	reflectionColor = mix(reflectionColor, reflectionColor * waterTint, 0.3);
 	
-	// === FRESNEL (Schlick approximation) ===
-	// Softer curve so reflections are visible from normal viewing angles
+	// A math trick to make the water reflect more when viewed from a distance.
+	// This uses a simplified formula learned in class (Schlick's approximation).
+	// Ref: https://en.wikipedia.org/wiki/Schlick%27s_approximation
 	vec3 viewDir = normalize(cameraPos - FragPos);
 	float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 2.0);
 	fresnel = clamp(fresnel, 0.15, 0.65);  // Min 15%, max 65% reflection
 	
-	// Fade reflections when there is no light (nighttime)
+	// Reduce the reflection at night when the sun is gone.
 	float sunBrightness = length(sunColor);
 	fresnel *= clamp(sunBrightness, 0.0, 1.0);
 	
-	// === FINAL COMPOSITE ===
+	// Putting it all together for the final color.
 	vec3 waterColor = totalLight * texResult.rgb;
 	
 	if(texResult.a > 0.5 && fresnel > 0.01) {

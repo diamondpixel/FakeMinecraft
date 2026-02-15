@@ -10,7 +10,7 @@
 
 /**
  * @file Sky.cpp
- * @brief Implementation of atmospheric day/night cycles and celestial rendering.
+ * @brief This file handles the sky rendering, including the day/night cycle and atmospheric colors.
  */
 
 namespace {
@@ -20,9 +20,10 @@ namespace {
     /** @} */
 
     /** @name Color Palettes
-     * Defined for different times of day to allow smooth interpolation.
-     * @{
-     */
+ * Colors are defined for different times of the day. Linear interpolation 
+ * is used to transition between them during the update.
+ * @{
+ */
     const glm::vec3 DAY_SKY_COLOR(0.5f, 0.75f, 1.0f);
     const glm::vec3 NIGHT_SKY_COLOR(0.02f, 0.02f, 0.05f);
     const glm::vec3 SUNSET_SKY_COLOR(0.9f, 0.5f, 0.2f);
@@ -35,10 +36,11 @@ namespace {
     constexpr float INV_SUNSET_THRESHOLD = 1.0f / SUNSET_THRESHOLD;
     /** @} */
 
-    /** @name Shared Geometry Data
-     * A standard unit quad for billboard rendering.
-     * @{
-     */
+    /** @name Static Geometry
+ * A simple quad is used for rendering the sky. Vertex data is stored in the GPU 
+ * during initialization for efficiency.
+ * @{
+ */
     constexpr float QUAD_VERTICES[] = {
         -0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
          0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
@@ -91,7 +93,7 @@ void Sky::loadTexture(const char* path, GLuint& texID) {
     glBindTexture(GL_TEXTURE_2D, texID);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
 
-    // use nearest filtering for that crisp voxel aesthetic.
+    // Nearest filtering is used so the textures look blocky and match the game.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -126,21 +128,21 @@ void Sky::update(float deltaTime) {
         timeOfDay -= 1.0f;
     }
 
-    // Single-pass lighting update.
+    // All the lighting values are updated in one go here.
     updateCachedValues();
 }
 
 void Sky::updateCachedValues() {
-    // 1. Angular state
+    // 1. Figure out the sun's angle
     cachedAngle = timeOfDay * TWO_PI;
     cachedCosAngle = std::cos(cachedAngle);
     cachedSinAngle = std::sin(cachedAngle);
     cachedSunHeight = -cachedCosAngle; // Maps cos range [-1, 1] to height range [1, -1] (noon=1)
 
-    // 2. Global Light Direction (Sun -> Earth)
+    // 2. Figure out the direction of the sunlight (Sun -> Ground)
     cachedSunDirection = glm::normalize(glm::vec3(0.3f, cachedSunHeight, cachedSinAngle));
 
-    // 3. Sun Color Interpolation
+    // 3. Fading the sun's color based on height
     if (cachedSunHeight > 0.0f) [[unlikely]] {
         // Night phase
         cachedSunColor = glm::vec3(0.0f);
@@ -156,7 +158,7 @@ void Sky::updateCachedValues() {
         }
     }
 
-    // 4. Ambient Strength (Moonlight vs Sunlight)
+    // 4. Decide how much ambient light we have based on time of day.
     if (cachedSunHeight > 0.0f) [[unlikely]] {
         // Night: slight ambient boost when moon is high
         cachedAmbientStrength = 0.15f + 0.05f * (1.0f - cachedSunHeight);
@@ -165,7 +167,7 @@ void Sky::updateCachedValues() {
         cachedAmbientStrength = 0.3f + 0.15f * (-cachedSunHeight);
     }
 
-    // 5. Sky Color Selection (Fog/ClearColor)
+    // 5. Pick the sky color based on how low the sun is.
     if (cachedSunHeight > 0.1f) [[unlikely]] {
         cachedSkyColor = NIGHT_SKY_COLOR;
     } else if (cachedSunHeight > -0.1f) [[unlikely]] {
@@ -203,7 +205,7 @@ void Sky::render(const glm::mat4& view, const glm::mat4& projection, const glm::
     // Batch GL state changes for celestial rendering
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE); // Additive blending for glow effect
+    glBlendFunc(GL_ONE, GL_ONE); // Using additive blending so they look like they're glowing.
     glDisable(GL_CULL_FACE);
 
     skyShader->use();
@@ -230,7 +232,7 @@ void Sky::renderBillboard(GLuint texture, const glm::vec3& direction, float size
     // Project the billboard far into the distance.
     const glm::vec3 billboardPos = cameraPos + direction * 500.0f;
 
-    // Extract basis vectors from the view matrix to create a camera-facing billboard.
+    // The camera's vectors are extracted so the sun and moon always face the player.
     const glm::vec3 right(view[0][0], view[1][0], view[2][0]);
     const glm::vec3 up(view[0][1], view[1][1], view[2][1]);
     const glm::vec3 forward = glm::normalize(cameraPos - billboardPos);

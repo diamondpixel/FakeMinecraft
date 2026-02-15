@@ -1,8 +1,15 @@
+/**
+ * @file Slider.cpp
+ * @brief Implementation of a UI slider for adjusting values.
+ */
 #include <GL/glew.h>
 #include "Slider.h"
 #include <algorithm>
 #include <Graphics.h>
 
+/**
+ * @brief Renders the slider bar and handle.
+ */
 void Slider::draw() const {
     graphics::Brush brush;
     brush.outline_opacity = 0.0f;
@@ -38,6 +45,9 @@ void Slider::draw() const {
 }
 
 
+/**
+ * @brief Updates the slider's value based on mouse movement while dragging.
+ */
 void Slider::update(float mouseX, int& value) {
     if (isDragging) {
         mouseX = std::max(x, std::min(x + width, mouseX));

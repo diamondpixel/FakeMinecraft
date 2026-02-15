@@ -8,13 +8,11 @@
 #include <cstring>
 
 /**
- * @struct Block
- * @brief Represents a single block type definition with its physical properties and textures.
+ * This structure stores all the information about a block, like its name 
+ * and what textures it uses.
  * 
- * This structure is designed for high performance and memory locality. It uses 
- * fixed-size character arrays instead of std::string to avoid heap allocations 
- * and ensure that all block data remains within the same CPU cache line when 
- * accessed from the BlockRegistry.
+ * It uses simple character arrays for names to keep things organized 
+ * and to make it easier for the computer to load the data quickly.
  */
 struct Block
 {
@@ -25,11 +23,11 @@ public:
      */
 	enum BLOCK_TYPE
 	{
-		SOLID,       ///< Fully opaque cubes (e.g., Stone, Dirt).
-		TRANSPARENT, ///< Blocks that allow light but aren't liquid (e.g., Glass).
-		LEAVES,      ///< Semi-transparent blocks with custom culling logic.
-		BILLBOARD,   ///< X-quads used for plants and flowers.
-		LIQUID       ///< Fluids with animated textures and no collision.
+		SOLID,       ///< Regular blocks like Stone.
+		TRANSPARENT, ///< Blocks you can see through like Glass.
+		LEAVES,      ///< Leaf blocks (transparent but slightly different).
+		BILLBOARD,   ///< Flat plants like flowers.
+		LIQUID       ///< Water or Lava.
 	};
 
     /** @name Texture Layer Cache

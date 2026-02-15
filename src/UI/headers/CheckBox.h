@@ -1,7 +1,15 @@
+/**
+ * @file CheckBox.h
+ * @brief Header for the Checkbox UI element.
+ */
 #pragma once
 
 #include <graphics.h>
 
+/**
+ * @class Checkbox
+ * @brief A simple box that can be toggled on or off.
+ */
 class Checkbox {
 private:
     float x, y;   // Position of the checkbox

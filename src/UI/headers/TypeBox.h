@@ -1,8 +1,16 @@
+/**
+ * @file TypeBox.h
+ * @brief Header for the TypeBox UI element.
+ */
 #pragma once
 #include <string>
 #include <utility>
 #include <graphics.h>
 
+/**
+ * @class TypeBox
+ * @brief A box where the player can type in text (like for a seed).
+ */
 class TypeBox {
 private:
     std::string text;

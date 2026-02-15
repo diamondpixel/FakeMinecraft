@@ -1,4 +1,8 @@
- #pragma once
+ /**
+ * @file ChunkPos.h
+ * @brief Simple structure for storing a chunk's position.
+ */
+#pragma once
 
 struct ChunkPos
 {

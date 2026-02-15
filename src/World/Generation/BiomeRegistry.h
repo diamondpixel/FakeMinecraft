@@ -12,8 +12,11 @@
 #include "../headers/Blocks.h"
 
 /**
- * BiomeRegistry - Singleton that manages biome definitions and lookup.
- * Optimized for fast biome lookup and minimal allocation overhead.
+ * @class BiomeRegistry
+ * @brief Manages all the different biomes available in the game.
+ * 
+ * It helps find the right biome for a given location based on temperature 
+ * and humidity.
  */
 class BiomeRegistry {
 public:
@@ -35,11 +38,9 @@ public:
         return instance;
     }
 
-    // Get biome based on climate and continental noise
-    // Optimized for branch prediction and minimal comparisons
+    // Figures out the biome for a block based on the environmental values.
     [[nodiscard]] const Biome& getBiome(const float temp, const float humid, const float cont) const noexcept {
-        // Continental Priority (most predictable branches first):
-        // Ocean check - most common for large worlds
+        // Ocean check - if the continental noise is very low, it's deep water.
         if (cont < -0.2f) {
             return biomes[OCEAN];
         }
@@ -126,7 +127,7 @@ private:
 
     bool initialized;
 
-    // Use std::array instead of vector - no dynamic allocation, better cache locality
+    // Use an array to store biomes for better reliability.
     std::array<Biome, BIOME_COUNT> biomes;
 
     // Feature storage - grouped by type for better cache locality

@@ -1,3 +1,7 @@
+/**
+ * @file Biome.h
+ * @brief Definition of different biomes in the game.
+ */
 #pragma once
 
 #include <string>
@@ -6,7 +10,8 @@
 #include "Feature.h"
 
 /**
- * Biome definition - contains all generation parameters for a specific biome.
+ * @struct Biome
+ * @brief Stores information about how a specific biome (like a Forest) should look.
  */
 struct Biome {
     // Identification

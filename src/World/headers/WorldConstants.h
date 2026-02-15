@@ -1,3 +1,7 @@
+/**
+ * @file WorldConstants.h
+ * @brief Global settings for the project (like world height and chunk size).
+ */
 #pragma once
 
 constexpr int MAX_HEIGHT = 256;

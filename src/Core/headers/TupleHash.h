@@ -1,9 +1,8 @@
 /**
  * @file TupleHash.h
- * @brief Custom hashing implementation for std::tuple to enable its use in unordered containers.
+ * @brief Custom way to hash std::tuple so we can use them as keys in maps.
  * 
- * Provides a highly optimized, template-based hashing mechanism that allows std::tuple 
- * to be used as keys in std::unordered_map and std::unordered_set.
+ * Uses a template-based approach to combine hash values for each part of the tuple.
  */
 
 #include <tuple>
@@ -62,10 +61,10 @@ namespace std {
 
 #if __cplusplus >= 201703L
         /**
-         * @brief Recursion-free tuple hashing using C++17 fold expressions.
+         * @brief Efficient tuple hashing using features from C++17.
          * 
-         * This implementation generates optimal code with zero function call overhead 
-         * by expanding all hash_combine calls in a single expression.
+         * This expands the hash for each element in the tuple to avoid
+         * the overhead of individual function calls.
          */
         template <typename Tuple, std::size_t... Indices>
         [[nodiscard]] constexpr std::size_t hash_tuple_impl(const Tuple& tuple, std::index_sequence<Indices...>)

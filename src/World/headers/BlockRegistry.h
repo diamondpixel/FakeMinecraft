@@ -1,6 +1,6 @@
 /**
  * @file BlockRegistry.h
- * @brief Singleton registry for defining and retrieving block types.
+ * @brief Registry for keeping track of all the block types in the game.
  */
 
 #pragma once
@@ -13,10 +13,10 @@
 
 /**
  * @class BlockRegistry
- * @brief Centralized database of all block types in the game.
+ * @brief This class stores all the different blocks we've created.
  * 
- * The BlockRegistry manages the lifecycle of block definitions. It assigns unique 
- * numeric IDs to block names, allowing for O(1) lookups during voxel operations.
+ * It assigns a number to each block name so we can find them 
+ * very quickly when building the world.
  */
 class BlockRegistry {
 public:

@@ -1,7 +1,7 @@
 #include "Chunk.h"
 #include "Blocks.h"
 
-// Generate helper for world block faces (Array Texture Version)
+// Helper to create block faces for the world mesh.
 void Chunk::generateWorldFaces(const int x, const int y, const int z, FACE_DIRECTION faceDirection, const Block *block,
                                unsigned int &currentVertex, const int subChunkIndex) {
     auto& vertices = worldVertices[subChunkIndex];
@@ -70,7 +70,7 @@ void Chunk::generateWorldFaces(const int x, const int y, const int z, FACE_DIREC
     currentVertex += 4;
 }
 
-// Billboard generator
+// Logic for drawing plants and other thin objects.
 void Chunk::generateBillboardFaces(const int x, const int y, const int z, const Block *block,
                                    unsigned int &currentVertex, const int subChunkIndex) {
     auto& vertices = billboardVertices[subChunkIndex];
@@ -150,7 +150,7 @@ void Chunk::generateBillboardFaces(const int x, const int y, const int z, const 
     currentVertex += 8;
 }
 
-// Liquid generator
+// Logic for drawing liquids like water or lava.
 void Chunk::generateLiquidFaces(const int x, const int y, const int z, const FACE_DIRECTION faceDirection,
                                 const Block *block, unsigned int &currentVertex, char liquidTopValue, uint8_t light, const int subChunkIndex) {
     auto& vertices = liquidVertices[subChunkIndex];

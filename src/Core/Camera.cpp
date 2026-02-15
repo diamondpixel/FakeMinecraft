@@ -3,7 +3,7 @@
 
 /**
  * @file Camera.cpp
- * @brief Implementation of viewport navigation and vector math.
+ * @brief This file handles the camera and how we move around the world.
  */
 
 namespace {
@@ -11,8 +11,7 @@ namespace {
     const glm::vec3 INITIAL_FRONT(0.0f, 0.0f, -1.0f);
 
     /**
-     * @brief Normalizes an angle into the [0, max) range.
-     * Uses fmod for high-performance wrapping without conditional branching where possible.
+     * @brief fmod is used here to wrap the angle smoothly if it exceeds the limit.
      */
     [[gnu::always_inline]]
     float wrapAngle(float angle, float max) {
@@ -21,7 +20,7 @@ namespace {
     }
 
     /**
-     * @brief Fast scalar clamping.
+     * @brief A simple helper to clamp values between a min and max.
      */
     [[gnu::always_inline]]
     float clamp(float value, float min, float max) {
@@ -30,7 +29,7 @@ namespace {
 }
 
 /**
- * @brief Default constructor. Updates internal vectors immediately to ensure a valid view matrix.
+ * @brief Constructor that sets up the camera and makes sure the orientation is correct from the start.
  */
 Camera::Camera(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : Position(position)
@@ -46,7 +45,7 @@ Camera::Camera(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
 }
 
 /**
- * @brief Scalar constructor for low-level initialization.
+ * @brief Another constructor if we want to pass each coordinate individually.
  */
 Camera::Camera(float posX, float posY, float posZ, float upX, float upY, float upZ, float yaw, float pitch)
     : Position(posX, posY, posZ)
@@ -62,25 +61,21 @@ Camera::Camera(float posX, float posY, float posZ, float upX, float upY, float u
 }
 
 /**
- * @brief Returns the view matrix calculated using the LookAt algorithm.
+ * @brief The LookAt algorithm is used to generate the view matrix.
  * 
- * Target position is calculated as current position + the look-direction vector.
- * The Up vector used is the relative camera-up, not world-up.
+ * View matrix depends on position and looking direction.
  */
 glm::mat4 Camera::getViewMatrix() const {
     return glm::lookAt(Position, Position + Front, Up);
 }
 
 /**
- * @brief Translates the camera position along its local axes.
- * 
- * Movement is relative to the camera's current rotation (e.g., FORWARD moves along the Front vector).
- * Vertical movement (UP/DOWN) is hard-coded to global Y to match typical voxel game behavior.
+ * @brief This handles moving the camera when we press keys on the keyboard.
  */
 void Camera::processKeyboard(Camera_Movement direction, float deltaTime) {
     const float velocity = deltaTime;
 
-    // Use a switch to allow compiler optimization into a jump table.
+    // A switch statement handles the different movement directions.
     switch (direction) {
         case FORWARD:
             Position += Front * velocity;
@@ -104,10 +99,9 @@ void Camera::processKeyboard(Camera_Movement direction, float deltaTime) {
 }
 
 /**
- * @brief Updates Euler angles from mouse input and recalculates orientation vectors.
+ * @brief orientation is updated based on mouse movement.
  * 
- * Applies sensitivity and enforces Pitch constraints to prevent the player from looking 
- * past the zenith/nadir (which causes gimbal lock in the view matrix).
+ * Pitch constraints are applied to prevent excessive upward or downward rotation.
  */
 void Camera::processMouseMovement(float xoffset, float yoffset, GLboolean constrainPitch) {
     xoffset *= MouseSensitivity;
@@ -118,7 +112,7 @@ void Camera::processMouseMovement(float xoffset, float yoffset, GLboolean constr
 
     if (constrainPitch) [[likely]] {
         Pitch = clamp(Pitch, PITCH_MIN, PITCH_MAX);
-        // Modular wrap for yaw to keep values within float precision limits
+        // Wrapping the yaw so the numbers don't get way too big.
         Yaw = wrapAngle(Yaw, YAW_WRAP);
     }
 
@@ -126,16 +120,9 @@ void Camera::processMouseMovement(float xoffset, float yoffset, GLboolean constr
 }
 
 /**
- * @brief Performs the spherical-to-cartesian coordinate conversion.
+ * @brief Yaw and pitch are converted into a direction vector.
  * 
- * 1. Radian conversion (cached to avoid redundant math).
- * 2. Front vector calculation:
- *    x = cos(yaw) * cos(pitch)
- *    y = sin(pitch)
- *    z = sin(yaw) * cos(pitch)
- * 3. Right/Up calculation via cross products:
- *    Right = normalize(Front x WorldUp)
- *    Up = normalize(Right x Front)
+ * Standard trigonometry for spherical coordinates is used.
  */
 void Camera::updateCameraVectors() {
     // Cache radians conversion
@@ -153,7 +140,7 @@ void Camera::updateCameraVectors() {
     Front.y = sinPitch;
     Front.z = sinYaw * cosPitch;
 
-    // Calculate Right and Up vectors (normalized to ensure uniform movement speed)
+    // Vectors are normalized to ensure consistent movement speed in every direction.
     Right = glm::normalize(glm::cross(Front, WorldUp));
     Up = glm::normalize(glm::cross(Right, Front));
 }

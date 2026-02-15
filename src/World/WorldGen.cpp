@@ -12,11 +12,12 @@
 
 /**
  * @file WorldGen.cpp
- * @brief Implementation of the optimized biome-driven 4-pass generation pipeline.
+ * @brief World generation implementation using a 4-pass system.
+ * This project uses OpenSimplex Noise for terrain generation
  */
 
-/** @name Hardware Optimization Macros
- * Wrappers for compiler-specific intrinsics to improve cache performance and throughput.
+/** @name Prefetching Macros
+ * Macros for software prefetching to improve memory throughput.
  * @{
  */
 #if defined(__GNUC__) || defined(__clang__)
@@ -33,10 +34,7 @@
 namespace {
     /**
      * @struct NoiseCache
-     * @brief Aligned workspace for per-column generation data.
-     * 
-     * Forced alignment to 64 bytes ensures the entire structure maps efficiently 
-     * to CPU cache lines, reducing L1 misses during Pass 1 and Pass 3.
+     * @brief A small cache for noise values so we don't have to keep recalculating them.
      */
     struct alignas(64) NoiseCache {
         int16_t surfaceHeight[CHUNK_WIDTH][CHUNK_WIDTH]; ///< Calculated height including biome blending.
@@ -55,10 +53,7 @@ namespace {
     };
 
     /**
-     * @brief A high-performance non-cryptographic hash for positional entropy.
-     * 
-     * Used for determining feature placement (trees, ores) without the cost 
-     * of a full RNG state update. Based on the SplitMix64 philosophy.
+     * @brief A fast hash function to help with randomizing where things like trees and ores go.
      */
     [[gnu::always_inline, msvc::forceinline]]
     uint64_t fastHash(int64_t x, int64_t z, uint64_t seed, uint64_t salt = 0) {
@@ -76,13 +71,10 @@ namespace {
 
     /**
      * @class TrilinearNoise
-     * @brief Handles 3D noise interpolation with high cache locality.
+     * @brief Class for handling 3D noise by interpolating between grid points.
      * 
-     * Instead of sampling noise for every single voxel (very slow), we sample 
-     * on a sparse grid (e.g., every 4 blocks) and use trilinear interpolation 
-     * to fill the gaps.
-     * 
-     * @tparam STEP The sparsity of the noise grid (must be a power of 2 for best results).
+     * Rare samples are taken at grid corners, and trilinear interpolation 
+     * is used to fill the gaps for efficiency.
      */
     template<int STEP>
     class TrilinearNoise {
@@ -122,8 +114,7 @@ namespace {
                 worldZ[z] = (startZ + z * STEP) * freq + offset;
             }
 
-            // Reordered loops for better cache access (Y innermost)
-            // Loop ordering (X -> Z -> Y) matches memory layout for maximum cache utility
+            // Loops are reordered to optimize memory access patterns for the CPU.
             for (int x = 0; x < POINTS_X; ++x) {
                 const float nx = worldX[x];
 
@@ -148,8 +139,7 @@ namespace {
         /**
          * @brief Interpolates a specific voxel value from the sparse grid.
          * 
-         * Combines 8 grid points manually. Uses FMA (Fused Multiply-Add) where 
-         * available to reduce floating point errors and instruction count.
+         * Fused Multiply-Add (FMA) is used for better accuracy and performance.
          * 
          * @param localX Local X coordinate within the chunk.
          * @param localY Local Y coordinate within the chunk.
@@ -228,39 +218,16 @@ namespace {
 }
 
 // ============================================================================
-// MAIN GENERATION FUNCTION - Optimized 4-Pass Pipeline
+// MAIN GENERATION FUNCTION - 4-Pass Pipeline
 // ============================================================================
 /**
- * @brief Optimized 4-Pass Terrain Generation Pipeline.
- * 
- * This function implements a highly optimized, multi-threaded friendly pipeline 
- * for generating chunk voxel data. It leverages cache-aligned data structures, 
- * thread-local noise generators, prefetching, and FMA instructions for performance.
- * 
- * Process:
- * 1. **Climate & Height Pass**: Samples Temp/Humid/Continentalness to determine biomes. 
- *    Height values are smoothed across biome boundaries using grid-sampling.
- *    Results are stored in a cache-aligned `NoiseCache` for subsequent passes.
- * 2. **3D Noise Pass**: Generates a sparse 3D grid for subterranean density (caves) 
- *    using `TrilinearNoise` for efficient interpolation.
- * 3. **Volume Pass**: Fills the chunk buffer with voxel IDs based on biome strata, 
- *    interpolated cave density, and surface height. This pass is optimized for 
- *    cache locality by processing columns in a Z-Y-X order.
- * 4. **Decoration Pass**: Spawns features (trees, plants) and distributes 
- *    underground ore veins and pockets using a fast, non-cryptographic RNG.
- * 
- * @param chunkPos The world-space grid position of the chunk to generate.
- * @param chunkData Pointer to the raw buffer to fill (size: CHUNK_WIDTH*CHUNK_WIDTH*CHUNK_HEIGHT).
- * @param seed The global world seed.
+ * @brief The main function that generates a chunk in 4 different steps.
  */
 void WorldGen::generateChunkData(const ChunkPos chunkPos, uint8_t *chunkData, const long seed) {
     /**
      * @struct NoiseContext
-     * @brief Persistent thread-local storage for noise generators.
-     * 
-     * Reinitializing Simplex Noise for every chunk is expensive. This context 
-     * ensures that static-like persistent states are kept alive across generation 
-     * calls in the same worker thread, reducing setup overhead.
+     * @brief thread_local storage ensures each thread has its own noise generators.
+     * Generators are kept alive across calls to avoid initialization overhead.
      */
     thread_local struct NoiseContext {
         OSN::Noise<2> terrainNoise;
@@ -438,6 +405,7 @@ void WorldGen::generateChunkData(const ChunkPos chunkPos, uint8_t *chunkData, co
      * 
      * Used for randomized feature placement within a chunk. Faster than mt19937 
      * and maintains better statistical qualities than simple LCGs.
+     * Reference: https://en.wikipedia.org/wiki/Xorshift#xorshift*
      */
     struct FastRNG {
         uint64_t state;

@@ -7,9 +7,8 @@
  * @namespace Physics
  * @brief Provides gravity, collision detection, and raycasting utilities for the voxel world.
  * 
- * This namespace focuses on high-performance algorithms for interacting with the 
- * planet's voxel grid, specifically handling the complexity of chunked data structures
- * and negative coordinate spaces.
+ * This namespace contains the logic for how the player interacts with 
+ * the blocks, including the math used to detect which block is being looked at.
  */
 namespace Physics
 {
@@ -69,12 +68,9 @@ namespace Physics
 	};
 
 	/**
-	 * @brief Performs a high-performance Digital Differential Analyzer (DDA) raycast.
-	 * 
-	 * The DDA algorithm is significantly more robust than fixed-step raymarching 
-	 * as it visits every voxel boundary the ray crosses. This prevents "tunneling" 
-	 * through thin surfaces while maintaining O(N) complexity where N is the number 
-	 * of voxels traversed.
+	 * The DDA algorithm is used because it checks every single block in the 
+	 * ray's path, ensuring that small blocks aren't skipped over. 
+	 * This makes it work better than simpler methods.
 	 * 
 	 * Logic Flow:
 	 * 1. Normalize the direction and initialize the current voxel (mapPos).

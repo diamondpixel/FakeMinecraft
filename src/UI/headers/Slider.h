@@ -1,6 +1,14 @@
+/**
+ * @file Slider.h
+ * @brief Header for the Slider UI element.
+ */
 #pragma once
 
 
+/**
+ * @class Slider
+ * @brief A bar that allows the player to select a value by sliding a handle.
+ */
 class Slider {
 public:
     // Slider properties

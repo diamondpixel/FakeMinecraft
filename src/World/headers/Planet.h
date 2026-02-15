@@ -1,6 +1,6 @@
 /**
  * @file Planet.h
- * @brief World management system for chunked voxel data.
+ * @brief This header defines the Planet class which manages all our voxel chunks.
  */
 
 #pragma once
@@ -23,21 +23,20 @@
 
 /**
  * @enum OcclusionMethod
- * @brief Strategy for processing Hardware Occlusion Query results.
+ * @brief Different ways to decide if a chunk is hidden or not based on GPU queries.
  */
 enum class OcclusionMethod : uint8_t {
-    VOTING,  ///< Discrete voting: requires N consecutive failures to hide.
-    EMA      ///< Exponential Moving Average: smooth visibility interpolation.
+    VOTING,  ///< Discrete voting: we wait for N failures before hiding it (prevents flickering).
+    EMA      ///< Exponential Moving Average: a smoother way to interpolate visibility.
 };
 
 /**
  * @class Planet
- * @brief The central coordinator for world generation, chunk management, and rendering.
+ * @brief The main class for our world system.
  * 
- * Planet handles the lifecycle of voxel data, including background generation threads,
- * frustum culling, hardware occlusion queries, and parallel mesh reconstruction.
- * It uses a shared-mutex and atomic-based concurrency model to allow high-performance
- * background updates while minimizing render-thread stalls.
+ * This class handles almost everything related to the world: generation in the background,
+ * managing the chunks, frustum culling, and the parallel meshing. The project uses shared_mutex 
+ * and atomics so it works well with the background threads without lagging the main game.
  */
 class Planet
 {
@@ -53,11 +52,12 @@ public:
     ~Planet();
 
     /**
-     * @brief The main per-frame logic.
+     * @brief The main update function called every frame.
      * 
-     * Handles chunk loading/unloading, mesh uploads, and visibility sorting.
-     * @param cameraPos Current world-space position of the player.
-     * @param updateOcclusion If true, issues new hardware occlusion queries.
+     * Handles stuff like loading/unloading chunks, uploading new meshes to the GPU, 
+     * and sorting chunks by distance.
+     * @param cameraPos Where the player is in the world.
+     * @param updateOcclusion Turn this off if you don't want to run occlusion queries.
      */
     void update(const glm::vec3& cameraPos, bool updateOcclusion = true);
     
@@ -67,14 +67,14 @@ public:
      */
     void renderShadows(Shader* shader);
 
-    // Shadow Mapping Resources
+    // Stuff for shadows
     unsigned int depthMapFBO = 0;
     unsigned int depthMap = 0;
     const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
-    float shadowDistance = 1100.0f; // Distance for shadow frustum
+    float shadowDistance = 1100.0f; // How far away we want shadows to render
     glm::mat4 lightSpaceMatrix;
 
-    // Reflection Resources
+    // Stuff for reflections
     unsigned int reflectionFBO = 0;
     unsigned int reflectionTexture = 0;
     unsigned int reflectionDepthRBO = 0;
@@ -97,19 +97,19 @@ public:
     void updateFrustum(const glm::mat4& frustumVP, const glm::mat4& renderingVP);
 
     /**
-     * @brief Retrieves a chunk at the given position.
-     * @return Pointer to the chunk, or nullptr if not loaded.
+     * @brief Get a chunk based on its coordinates.
+     * @return Pointer to the chunk, or nullptr if it's not actually loaded yet.
      */
     Chunk* getChunk(ChunkPos chunkPos);
 
     /**
-     * @brief Forces a rebuild of the chunk loading queue next frame.
+     * @brief Clear the loading queue so we can rebuild it next frame.
      */
     void clearChunkQueue();
 
 private:
     /**
-     * @brief Entry point for the background world-processing thread.
+     * @brief This is where the background thread starts doing its thing.
      */
     void chunkThreadUpdate();
 
@@ -137,11 +137,11 @@ private:
     /** @} */
 
 public:
-    static Planet* planet; ///< Singleton-like access point for global queries.
+    static Planet* planet; ///< A global pointer so we can access the world from anywhere.
 
-    /** @name Render Statistics @{ */
-    std::atomic<unsigned int> numChunks{0};         ///< Total chunks currently tracking in memory.
-    std::atomic<unsigned int> numChunksRendered{0}; ///< Chunks that passed culling this frame.
+    /** @name Render Stats @{ */
+    std::atomic<unsigned int> numChunks{0};         ///< How many chunks we have in memory.
+    std::atomic<unsigned int> numChunksRendered{0}; ///< How many chunks we actually drew this frame.
     /** @} */
 
     int renderDistance = 30; ///< Radius of loaded chunks around the player.
@@ -149,22 +149,22 @@ public:
 
 private:
     /** @name Data Structures
-     * Thread-safe maps for managing chunk lifecycle.
+     * Data structures for keeping track of our chunks.
      * @{
      */
-    std::unordered_map<ChunkPos, Chunk*, ChunkPosHash> chunks;         ///< Master map of active chunks.
-    std::vector<Chunk*> chunkList;                                    ///< Contiguous list for fast iteration.
-    std::unordered_map<ChunkPos, std::shared_ptr<ChunkData>, ChunkPosHash> chunkData; ///< Shared voxel data buffers.
+    std::unordered_map<ChunkPos, Chunk*, ChunkPosHash> chunks;         ///< Our main map that has all the chunks we're using.
+    std::vector<Chunk*> chunkList;                                    ///< A list that helps us loop through chunks really fast.
+    std::unordered_map<ChunkPos, std::shared_ptr<ChunkData>, ChunkPosHash> chunkData; ///< Data for the voxels, shared between chunks.
     /** @} */
 
     /** @name Queues
-     * Work-queues processed by background threads.
+     * Queues that our background thread works on.
      * @{
      */
-    std::queue<ChunkPos> chunkQueue;     ///< Positions awaiting object allocation.
-    std::queue<ChunkPos> chunkDataQueue; ///< Positions awaiting noise generation.
-    std::queue<ChunkPos> regenQueue;    ///< Chunks requiring mesh reconstruction.
-    std::atomic<unsigned int> chunksLoading{0}; ///< Current count of background tasks.
+    std::queue<ChunkPos> chunkQueue;     ///< Chunks that need to be created.
+    std::queue<ChunkPos> chunkDataQueue; ///< Chunks that need our noise algorithm to run.
+    std::queue<ChunkPos> regenQueue;    ///< Chunks that need their 3D mesh rebuilt.
+    std::atomic<unsigned int> chunksLoading{0}; ///< How many things are currently loading.
     /** @} */
 
     /** @name Synchronization & State @{ */
@@ -177,18 +177,18 @@ private:
     Shader* billboardShader;
     Shader* bboxShader;
 
-    std::thread chunkThread;                   ///< Background world-worker.
-    mutable std::shared_mutex chunkMutex;      ///< Mutex for reader-writer pattern on chunk maps.
-    std::atomic<bool> shouldEnd{false};        ///< Exit signal for threads.
+    std::thread chunkThread;                   ///< The thread that handles the world in the background.
+    mutable std::shared_mutex chunkMutex;      ///< A lock so multiple threads don't mess up our chunk maps.
+    std::atomic<bool> shouldEnd{false};        ///< A flag to tell the threads to stop.
 
-    Frustum frustum;                           ///< View frustum for culling.
+    Frustum frustum;                           ///< Used to see what's actually in front of the camera.
     glm::mat4 lastViewProjection = glm::mat4(1.0f);
-    ThreadPool chunkGenPool;                   ///< Parallel generator pool.
+    ThreadPool chunkGenPool;                   ///< A pool of threads to generate world data in parallel.
     int visibleCount = 0;
     /** @} */
 
     /** @name Render Caching
-     * Pre-allocated lists to avoid per-frame allocations.
+     * Lists we pre-allocate so we don't have to keep creating them every frame.
      * @{
      */
     int prevSortCamX = -1000, prevSortCamZ = -1000;
@@ -198,8 +198,8 @@ private:
     std::vector<Chunk*> frustumVisibleChunks;
     std::vector<ChunkPos> toDeleteList;
 
-    std::vector<Chunk*> chunkPool;             ///< Recycle bin for deleted chunks.
-    std::vector<Chunk*> renderChunks;          ///< Staged list for thread-safe rendering.
+    std::vector<Chunk*> chunkPool;             ///< A place where we put old chunks so we can reuse them.
+    std::vector<Chunk*> renderChunks;          ///< A list we use for rendering so it doesn't change while we're drawing.
     std::atomic<bool> renderChunksDirty{false};
     /** @} */
 

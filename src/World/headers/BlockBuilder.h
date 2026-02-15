@@ -1,6 +1,6 @@
 /**
  * @file BlockBuilder.h
- * @brief Fluent interface for constructing Block definitions.
+ * @brief Helper to create Block definitions easily.
  */
 
 #pragma once
@@ -9,10 +9,10 @@
 
 /**
  * @class BlockBuilder
- * @brief Helper class to simplify the registration of new block types.
+ * @brief A helper class that makes it easy to set up new types of blocks.
  * 
- * Uses a fluent "Builder" pattern to configure block properties like textures 
- * and physical types before returning a finalized Block structure.
+ * It allows us to set the name, textures, and type of a block one after 
+ * another before creating the final block object.
  */
 class BlockBuilder {
 public:

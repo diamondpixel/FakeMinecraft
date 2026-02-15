@@ -39,9 +39,8 @@ struct GameState {
  * GameObject manages the main game loop, initialization of all subsystems (Graphics, Shaders, UI, Planet),
  * and high-level logic like input handling, rendering orchestration, and block interaction.
  * 
- * The class layout is optimized for cache efficiency by grouping frequently accessed data 
- * ("hot" data) like the Camera and GameState at the top, while keeping "cold" data 
- * like resource paths at the bottom.
+ * The class organizes variables so that frequently used data (like the Camera)
+ * is easier for the program to find quickly.
  */
 class GameObject {
 public:
@@ -125,7 +124,7 @@ private:
     /** @} */
 
     // ========================================================================
-    // MEMBER VARIABLES - Optimized layout for cache efficiency
+    // MEMBER VARIABLES
     // ========================================================================
 
     /// @brief Primary camera instance. Most frequently accessed during matrix updates.
@@ -184,7 +183,7 @@ private:
     unsigned int outlineVAO = 0;
     unsigned int outlineVBO = 0;
 
-    // MSAA Resources
+    // Multi-Sampling for smoother edges
     unsigned int multisampledFBO = 0;
     unsigned int rbo = 0;
     unsigned int intermediateFBO = 0;

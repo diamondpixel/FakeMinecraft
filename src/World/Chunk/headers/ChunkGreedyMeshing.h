@@ -1,21 +1,28 @@
 #pragma once
 
+/**
+ * @file ChunkGreedyMeshing.h
+ * @brief Logic for combining block faces to reduce vertex count.
+ * Based on the "Greedy Meshing" algorithm by Mikola Lysenko:
+ * http://0fps.net/2012/06/30/meshing-in-a-minecraft-game/
+ */
+
 #include <vector>
 #include <glm/glm.hpp>
 #include "WorldVertex.h"
 #include "Block.h"
 #include "BlockRegistry.h"
 
-// Structure to hold greedy quad information
+// Stores information about a group of combined block faces.
 struct GreedyQuad {
     int x, y, z; // Position
-    int width, height; // Merged dimensions
-    uint16_t blockId; // Block type for texture
-    FACE_DIRECTION dir; // Face direction
-    uint8_t lightLevel; // Block light level for this face
+    int width, height; // Size of the combined area
+    uint16_t blockId; // The ID of the block type
+    FACE_DIRECTION dir; // Which way the face is pointing
+    uint8_t lightLevel; // Brightness of the face
 };
 
-// Generate a merged quad with proper texture tiling (Array Texture version)
+// Adds a combined quad to the vertex list.
 inline void emitGreedyQuad(const GreedyQuad &quad, const glm::vec3 &worldPos,
                            std::vector<WorldVertex> &vertices, std::vector<unsigned int> &indices,
                            unsigned int &currentVertex) {

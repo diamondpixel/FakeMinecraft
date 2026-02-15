@@ -4,8 +4,7 @@
 #include "../headers/WorldConstants.h"
 
 /**
- * Vegetation feature - places simple 1-2 block tall plants (grass, flowers).
- * Optimized for cache efficiency and reduced redundant computations.
+ * Vegetation feature - places grass and flowers.
  */
 class VegetationFeature final : public Feature {
 public:
@@ -23,7 +22,7 @@ public:
 
     [[nodiscard]] bool canPlace(const uint8_t* chunkData,
                                  int localX, int localY, int localZ) const noexcept override {
-        // Early bounds check - reject invalid Y coordinates immediately
+        // Check if the plant's height is within the world bounds.
         if (localY <= 0 || localY >= CHUNK_HEIGHT - 2) {
             return false;
         }

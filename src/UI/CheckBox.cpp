@@ -1,3 +1,7 @@
+/**
+ * @file CheckBox.cpp
+ * @brief Implementation of a simple UI checkbox.
+ */
 #include "Checkbox.h"
 
 
@@ -8,6 +12,9 @@ Checkbox::Checkbox(float x, float y, float size)
     : x(x), y(y), size(size), checked(false) {
 }
 
+/**
+ * @brief Draws the checkbox on the screen using a few rectangles.
+ */
 void Checkbox::draw() const {
     graphics::Brush br;
     br.fill_opacity = 0.2f;
@@ -46,6 +53,12 @@ void Checkbox::draw() const {
     }
 }
 
+/**
+ * @brief Handles mouse clicks on the checkbox.
+ * 
+ * If the click is inside the box, it toggles the state and calls 
+ * the appropriate callback function.
+ */
 void Checkbox::handleClick(float mouseX, float mouseY,
                            std::function<void()> onChecked,
                            std::function<void()> onUnchecked) {
